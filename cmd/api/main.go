@@ -2,12 +2,12 @@ package main
 
 import (
 	"log"
-
-	"github.com/joho/godotenv"
-
 	"skipjd/internal/config"
 	"skipjd/internal/database"
+	"skipjd/internal/model"
 	"skipjd/internal/router"
+
+	"github.com/joho/godotenv"
 )
 
 func main() {
@@ -18,6 +18,17 @@ func main() {
 	db, err := database.NewGormDB(cfg)
 	if err != nil {
 		log.Fatalf("failed to connect db: %v", err)
+	}
+
+	if cfg.DBAutoMigrate {
+		if err := db.AutoMigrate(
+			&model.User{},
+			//&model.AlertSetting{},
+			//&model.JobPosting{},
+			//&model.SentJobAlert{},
+		); err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	r := router.Setup(db)
