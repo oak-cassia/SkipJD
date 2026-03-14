@@ -4,10 +4,9 @@ import (
 	"skipjd/internal/handler"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 )
 
-func Setup(db *gorm.DB) *gin.Engine {
+func Setup(userHandler *handler.UserHandler) *gin.Engine {
 	r := gin.Default()
 
 	r.LoadHTMLGlob("web/templates/*")
@@ -19,7 +18,7 @@ func Setup(db *gorm.DB) *gin.Engine {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
-	_ = db
+	_ = userHandler
 
 	return r
 }

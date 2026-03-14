@@ -4,8 +4,11 @@ import (
 	"log"
 	"skipjd/internal/config"
 	"skipjd/internal/database"
+	"skipjd/internal/handler"
 	"skipjd/internal/model"
+	"skipjd/internal/repository"
 	"skipjd/internal/router"
+	"skipjd/internal/service"
 
 	"github.com/joho/godotenv"
 )
@@ -31,7 +34,11 @@ func main() {
 		}
 	}
 
-	r := router.Setup(db)
+	userRepo := repository.NewUserRepository(db)
+	userService := service.NewUserService(userRepo)
+	userHandler := handler.NewUserHandler(userService)
+
+	r := router.Setup(userHandler)
 	if err := r.Run(":" + cfg.Port); err != nil {
 		log.Fatalf("failed to run server: %v", err)
 	}
