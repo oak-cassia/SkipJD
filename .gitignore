@@ -1,0 +1,41 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go build
+/bin/
+/dist/
+/build/
+
+# Go workspace
+go.work
+go.work.sum
+
+# Dependency vendoring
+/vendor/
+
+# Env files
+.env
+.env.*
+
+# Logs
+*.log
+
+# Coverage
+coverage.out
+*.coverprofile
+
+# OS files
+.DS_Store
+
+# JetBrains / GoLand
+.idea/
+
+# Temp
+tmp/
+temp/
