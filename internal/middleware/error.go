@@ -1,14 +1,11 @@
 package middleware
 
 import (
-	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
-	"skipjd/internal/domain/auth"
+	"skipjd/internal/errs"
 
 	"github.com/gin-gonic/gin"
-	"github.com/go-playground/validator/v10"
 )
 
 func ErrorHandler() gin.HandlerFunc {
@@ -27,25 +24,19 @@ func ErrorHandler() gin.HandlerFunc {
 }
 
 func classifyError(err error) (int, string) {
-	switch {
-	case isBadRequestError(err):
+	var code errs.Code
+	if !errors.As(err, &code) {
+		code = errs.InternalServerError
+	}
+
+	switch code {
+	case errs.InvalidRequest:
 		return http.StatusBadRequest, "invalid request body"
-	case errors.Is(err, auth.ErrEmailAlreadyExists):
+	case errs.EmailAlreadyExists:
 		return http.StatusConflict, "email already exists"
-	case errors.Is(err, auth.ErrInvalidCredentials):
+	case errs.InvalidCredentials:
 		return http.StatusUnauthorized, "invalid email or password"
 	default:
 		return http.StatusInternalServerError, "internal server error"
 	}
-}
-
-func isBadRequestError(err error) bool {
-	var validationErrs validator.ValidationErrors
-	var syntaxErr *json.SyntaxError
-	var typeErr *json.UnmarshalTypeError
-
-	return errors.As(err, &validationErrs) ||
-		errors.As(err, &syntaxErr) ||
-		errors.As(err, &typeErr) ||
-		errors.Is(err, io.EOF)
 }

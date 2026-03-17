@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"skipjd/internal/errs"
 	"skipjd/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -18,7 +19,7 @@ func NewAuthHandler(authService *service.AuthService) *AuthHandler {
 func (h *AuthHandler) SignUp(c *gin.Context) {
 	var req signUpRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.Error(err)
+		c.Error(errs.InvalidRequest)
 		return
 	}
 
@@ -34,7 +35,7 @@ func (h *AuthHandler) SignUp(c *gin.Context) {
 func (h *AuthHandler) SignIn(c *gin.Context) {
 	var req signInRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.Error(err)
+		c.Error(errs.InvalidRequest)
 		return
 	}
 

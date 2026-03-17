@@ -2,7 +2,7 @@ package service
 
 import (
 	"errors"
-	"skipjd/internal/domain/auth"
+	"skipjd/internal/errs"
 	"strings"
 	"testing"
 
@@ -113,7 +113,7 @@ func TestAuthServiceSignUpRejectsDuplicateEmail(t *testing.T) {
 		t.Fatalf("first SignUp returned error: %v", err)
 	}
 
-	if _, err := service.SignUp("user@example.com", "password123", "Oak"); !errors.Is(err, auth.ErrEmailAlreadyExists) {
+	if _, err := service.SignUp("user@example.com", "password123", "Oak"); !errors.Is(err, errs.EmailAlreadyExists) {
 		t.Fatalf("expected duplicate email error, got %v", err)
 	}
 }
@@ -135,7 +135,7 @@ func TestAuthServiceSignInReturnsInvalidCredentialsForWrongPassword(t *testing.T
 		IsActive: true,
 	}
 
-	if _, err := service.SignIn("user@example.com", "wrong-password"); !errors.Is(err, auth.ErrInvalidCredentials) {
+	if _, err := service.SignIn("user@example.com", "wrong-password"); !errors.Is(err, errs.InvalidCredentials) {
 		t.Fatalf("expected invalid credentials error, got %v", err)
 	}
 }
@@ -157,7 +157,7 @@ func TestAuthServiceSignInReturnsInvalidCredentialsForInactiveUser(t *testing.T)
 		IsActive: false,
 	}
 
-	if _, err := service.SignIn("user@example.com", "password123"); !errors.Is(err, auth.ErrInvalidCredentials) {
+	if _, err := service.SignIn("user@example.com", "password123"); !errors.Is(err, errs.InvalidCredentials) {
 		t.Fatalf("expected invalid credentials error for inactive user, got %v", err)
 	}
 }
