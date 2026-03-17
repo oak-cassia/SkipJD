@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"errors"
 	"net/http"
 	"skipjd/internal/service"
 
@@ -19,13 +18,13 @@ func NewAuthHandler(authService *service.AuthService) *AuthHandler {
 func (h *AuthHandler) SignUp(c *gin.Context) {
 	var req signUpRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		c.Error(err)
 		return
 	}
 
 	result, err := h.authService.SignUp(req.Email, req.Password, req.Name)
 	if err != nil {
-		h.writeAuthError(c, err)
+		c.Error(err)
 		return
 	}
 
@@ -35,26 +34,15 @@ func (h *AuthHandler) SignUp(c *gin.Context) {
 func (h *AuthHandler) SignIn(c *gin.Context) {
 	var req signInRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		c.Error(err)
 		return
 	}
 
 	result, err := h.authService.SignIn(req.Email, req.Password)
 	if err != nil {
-		h.writeAuthError(c, err)
+		c.Error(err)
 		return
 	}
 
 	c.JSON(http.StatusOK, toAuthResponse(result))
-}
-
-func (h *AuthHandler) writeAuthError(c *gin.Context, err error) {
-	switch {
-	case errors.Is(err, service.ErrEmailAlreadyExists):
-		c.JSON(http.StatusConflict, gin.H{"error": "email already exists"})
-	case errors.Is(err, service.ErrInvalidCredentials):
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid email or password"})
-	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
-	}
 }

@@ -2,12 +2,14 @@ package router
 
 import (
 	"skipjd/internal/handler"
+	"skipjd/internal/middleware"
 
 	"github.com/gin-gonic/gin"
 )
 
 func Setup(userHandler *handler.AuthHandler) *gin.Engine {
 	r := gin.Default()
+	r.Use(middleware.ErrorHandler())
 
 	r.LoadHTMLGlob("web/templates/*")
 

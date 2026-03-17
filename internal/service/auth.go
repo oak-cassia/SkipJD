@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"skipjd/internal/domain/auth"
 	"skipjd/internal/model"
 
 	mysqlDriver "github.com/go-sql-driver/mysql"
@@ -16,11 +17,6 @@ type AuthService struct {
 	jwtSecret []byte
 	jwtExpire time.Duration
 }
-
-var (
-	ErrEmailAlreadyExists = errors.New("email already exists")
-	ErrInvalidCredentials = errors.New("invalid credentials")
-)
 
 type AuthResult struct {
 	Token string
@@ -44,7 +40,7 @@ func (s *AuthService) SignUp(email, password, name string) (*AuthResult, error) 
 		return nil, err
 	}
 	if existingUser != nil {
-		return nil, ErrEmailAlreadyExists
+		return nil, auth.ErrEmailAlreadyExists
 	}
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -60,7 +56,7 @@ func (s *AuthService) SignUp(email, password, name string) (*AuthResult, error) 
 	}
 	if err := s.userStore.CreateUser(user); err != nil {
 		if isDuplicateEmailError(err) {
-			return nil, ErrEmailAlreadyExists
+			return nil, auth.ErrEmailAlreadyExists
 		}
 		return nil, err
 	}
@@ -83,13 +79,13 @@ func (s *AuthService) SignIn(email, password string) (*AuthResult, error) {
 		return nil, err
 	}
 	if user == nil {
-		return nil, ErrInvalidCredentials
+		return nil, auth.ErrInvalidCredentials
 	}
 	if !user.IsActive {
-		return nil, ErrInvalidCredentials
+		return nil, auth.ErrInvalidCredentials
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
-		return nil, ErrInvalidCredentials
+		return nil, auth.ErrInvalidCredentials
 	}
 
 	token, err := s.generateToken(user.ID, user.Email)
