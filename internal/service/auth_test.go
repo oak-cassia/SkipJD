@@ -1,13 +1,14 @@
 package service
 
 import (
-	"errors"
 	"skipjd/internal/errs"
 	"strings"
 	"testing"
 
 	"skipjd/internal/model"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -81,41 +82,24 @@ func TestAuthServiceSignUpHashesPasswordAndReturnsToken(t *testing.T) {
 	service := NewAuthService(store, "test-secret", 24)
 
 	result, err := service.SignUp(" USER@example.com ", "password123", "  Oak  ")
-	if err != nil {
-		t.Fatalf("SignUp returned error: %v", err)
-	}
-
-	if result.Token == "" {
-		t.Fatal("expected token to be returned")
-	}
-	if parts := strings.Split(result.Token, "."); len(parts) != 3 {
-		t.Fatalf("expected jwt with 3 parts, got %d", len(parts))
-	}
-	if result.User.Email != "user@example.com" {
-		t.Fatalf("expected normalized email, got %q", result.User.Email)
-	}
-	if result.User.Name != "Oak" {
-		t.Fatalf("expected trimmed name, got %q", result.User.Name)
-	}
-	if result.User.Password == "password123" {
-		t.Fatal("expected stored password to be hashed")
-	}
-	if err := bcrypt.CompareHashAndPassword([]byte(result.User.Password), []byte("password123")); err != nil {
-		t.Fatalf("expected bcrypt hash to match password: %v", err)
-	}
+	require.NoError(t, err)
+	require.NotEmpty(t, result.Token)
+	assert.Len(t, strings.Split(result.Token, "."), 3)
+	assert.Equal(t, "user@example.com", result.User.Email)
+	assert.Equal(t, "Oak", result.User.Name)
+	assert.NotEqual(t, "password123", result.User.Password)
+	require.NoError(t, bcrypt.CompareHashAndPassword([]byte(result.User.Password), []byte("password123")))
 }
 
 func TestAuthServiceSignUpRejectsDuplicateEmail(t *testing.T) {
 	store := newAuthTestStore()
 	service := NewAuthService(store, "test-secret", 24)
 
-	if _, err := service.SignUp("user@example.com", "password123", "Oak"); err != nil {
-		t.Fatalf("first SignUp returned error: %v", err)
-	}
+	_, err := service.SignUp("user@example.com", "password123", "Oak")
+	require.NoError(t, err)
 
-	if _, err := service.SignUp("user@example.com", "password123", "Oak"); !errors.Is(err, errs.EmailAlreadyExists) {
-		t.Fatalf("expected duplicate email error, got %v", err)
-	}
+	_, err = service.SignUp("user@example.com", "password123", "Oak")
+	require.ErrorIs(t, err, errs.EmailAlreadyExists)
 }
 
 func TestAuthServiceSignInReturnsInvalidCredentialsForWrongPassword(t *testing.T) {
@@ -123,9 +107,7 @@ func TestAuthServiceSignInReturnsInvalidCredentialsForWrongPassword(t *testing.T
 	service := NewAuthService(store, "test-secret", 24)
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
-	if err != nil {
-		t.Fatalf("GenerateFromPassword returned error: %v", err)
-	}
+	require.NoError(t, err)
 
 	store.users["user@example.com"] = &model.User{
 		ID:       1,
@@ -135,9 +117,8 @@ func TestAuthServiceSignInReturnsInvalidCredentialsForWrongPassword(t *testing.T
 		IsActive: true,
 	}
 
-	if _, err := service.SignIn("user@example.com", "wrong-password"); !errors.Is(err, errs.InvalidCredentials) {
-		t.Fatalf("expected invalid credentials error, got %v", err)
-	}
+	_, err = service.SignIn("user@example.com", "wrong-password")
+	require.ErrorIs(t, err, errs.InvalidCredentials)
 }
 
 func TestAuthServiceSignInReturnsInvalidCredentialsForInactiveUser(t *testing.T) {
@@ -145,9 +126,7 @@ func TestAuthServiceSignInReturnsInvalidCredentialsForInactiveUser(t *testing.T)
 	service := NewAuthService(store, "test-secret", 24)
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
-	if err != nil {
-		t.Fatalf("GenerateFromPassword returned error: %v", err)
-	}
+	require.NoError(t, err)
 
 	store.users["user@example.com"] = &model.User{
 		ID:       1,
@@ -157,7 +136,6 @@ func TestAuthServiceSignInReturnsInvalidCredentialsForInactiveUser(t *testing.T)
 		IsActive: false,
 	}
 
-	if _, err := service.SignIn("user@example.com", "password123"); !errors.Is(err, errs.InvalidCredentials) {
-		t.Fatalf("expected invalid credentials error for inactive user, got %v", err)
-	}
+	_, err = service.SignIn("user@example.com", "password123")
+	require.ErrorIs(t, err, errs.InvalidCredentials)
 }
