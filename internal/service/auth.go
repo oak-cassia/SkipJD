@@ -20,7 +20,6 @@ type AuthService struct {
 var (
 	ErrEmailAlreadyExists = errors.New("email already exists")
 	ErrInvalidCredentials = errors.New("invalid credentials")
-	ErrInactiveUser       = errors.New("inactive user")
 )
 
 type AuthResult struct {
@@ -87,7 +86,7 @@ func (s *AuthService) SignIn(email, password string) (*AuthResult, error) {
 		return nil, ErrInvalidCredentials
 	}
 	if !user.IsActive {
-		return nil, ErrInactiveUser
+		return nil, ErrInvalidCredentials
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
 		return nil, ErrInvalidCredentials

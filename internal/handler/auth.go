@@ -54,8 +54,6 @@ func (h *AuthHandler) writeAuthError(c *gin.Context, err error) {
 		c.JSON(http.StatusConflict, gin.H{"error": "email already exists"})
 	case errors.Is(err, service.ErrInvalidCredentials):
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid email or password"})
-	case errors.Is(err, service.ErrInactiveUser):
-		c.JSON(http.StatusForbidden, gin.H{"error": "account is inactive"})
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 	}

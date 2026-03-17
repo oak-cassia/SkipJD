@@ -139,7 +139,7 @@ func TestAuthServiceSignInReturnsInvalidCredentialsForWrongPassword(t *testing.T
 	}
 }
 
-func TestAuthServiceSignInRejectsInactiveUser(t *testing.T) {
+func TestAuthServiceSignInReturnsInvalidCredentialsForInactiveUser(t *testing.T) {
 	store := newAuthTestStore()
 	service := NewAuthService(store, "test-secret", 24)
 
@@ -156,7 +156,7 @@ func TestAuthServiceSignInRejectsInactiveUser(t *testing.T) {
 		IsActive: false,
 	}
 
-	if _, err := service.SignIn("user@example.com", "password123"); !errors.Is(err, ErrInactiveUser) {
-		t.Fatalf("expected inactive user error, got %v", err)
+	if _, err := service.SignIn("user@example.com", "password123"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("expected invalid credentials error for inactive user, got %v", err)
 	}
 }
