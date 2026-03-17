@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"errors"
 	"skipjd/internal/model"
 
 	"gorm.io/gorm"
@@ -25,6 +26,9 @@ func (r *UserRepository) ListUsers() ([]model.User, error) {
 func (r *UserRepository) GetUserByID(id uint) (*model.User, error) {
 	var user model.User
 	if err := r.db.First(&user, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return &user, nil
@@ -33,6 +37,9 @@ func (r *UserRepository) GetUserByID(id uint) (*model.User, error) {
 func (r *UserRepository) GetUserByEmail(email string) (*model.User, error) {
 	var user model.User
 	if err := r.db.Where("email = ?", email).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
 		return nil, err
 	}
 
