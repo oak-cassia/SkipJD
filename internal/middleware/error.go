@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"skipjd/internal/errs"
@@ -24,6 +25,10 @@ func ErrorHandler() gin.HandlerFunc {
 }
 
 func classifyError(err error) (int, string) {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return http.StatusGatewayTimeout, "request timeout"
+	}
+
 	var code errs.Code
 	if !errors.As(err, &code) {
 		code = errs.InternalServerError

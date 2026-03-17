@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"skipjd/internal/errs"
 	"strings"
 	"testing"
@@ -24,7 +25,7 @@ func newAuthTestStore() *authTestStore {
 	}
 }
 
-func (s *authTestStore) ListUsers() ([]model.User, error) {
+func (s *authTestStore) ListUsers(ctx context.Context) ([]model.User, error) {
 	users := make([]model.User, 0, len(s.users))
 	for _, user := range s.users {
 		users = append(users, *user)
@@ -32,7 +33,7 @@ func (s *authTestStore) ListUsers() ([]model.User, error) {
 	return users, nil
 }
 
-func (s *authTestStore) GetUserByID(id uint) (*model.User, error) {
+func (s *authTestStore) GetUserByID(ctx context.Context, id uint) (*model.User, error) {
 	for _, user := range s.users {
 		if user.ID == id {
 			copyUser := *user
@@ -42,7 +43,7 @@ func (s *authTestStore) GetUserByID(id uint) (*model.User, error) {
 	return nil, nil
 }
 
-func (s *authTestStore) GetUserByEmail(email string) (*model.User, error) {
+func (s *authTestStore) GetUserByEmail(ctx context.Context, email string) (*model.User, error) {
 	user, ok := s.users[email]
 	if !ok {
 		return nil, nil
@@ -52,7 +53,7 @@ func (s *authTestStore) GetUserByEmail(email string) (*model.User, error) {
 	return &copyUser, nil
 }
 
-func (s *authTestStore) CreateUser(user *model.User) error {
+func (s *authTestStore) CreateUser(ctx context.Context, user *model.User) error {
 	user.ID = s.nextID
 	s.nextID++
 
@@ -61,13 +62,13 @@ func (s *authTestStore) CreateUser(user *model.User) error {
 	return nil
 }
 
-func (s *authTestStore) UpdateUser(user *model.User) error {
+func (s *authTestStore) UpdateUser(ctx context.Context, user *model.User) error {
 	copyUser := *user
 	s.users[user.Email] = &copyUser
 	return nil
 }
 
-func (s *authTestStore) DeleteUser(id uint) error {
+func (s *authTestStore) DeleteUser(ctx context.Context, id uint) error {
 	for email, user := range s.users {
 		if user.ID == id {
 			delete(s.users, email)
@@ -81,7 +82,7 @@ func TestAuthServiceSignUpHashesPasswordAndReturnsToken(t *testing.T) {
 	store := newAuthTestStore()
 	service := NewAuthService(store, "test-secret", 24)
 
-	result, err := service.SignUp(" USER@example.com ", "password123", "  Oak  ")
+	result, err := service.SignUp(context.Background(), " USER@example.com ", "password123", "  Oak  ")
 	require.NoError(t, err)
 	require.NotEmpty(t, result.Token)
 	assert.Len(t, strings.Split(result.Token, "."), 3)
@@ -95,10 +96,10 @@ func TestAuthServiceSignUpRejectsDuplicateEmail(t *testing.T) {
 	store := newAuthTestStore()
 	service := NewAuthService(store, "test-secret", 24)
 
-	_, err := service.SignUp("user@example.com", "password123", "Oak")
+	_, err := service.SignUp(context.Background(), "user@example.com", "password123", "Oak")
 	require.NoError(t, err)
 
-	_, err = service.SignUp("user@example.com", "password123", "Oak")
+	_, err = service.SignUp(context.Background(), "user@example.com", "password123", "Oak")
 	require.ErrorIs(t, err, errs.EmailAlreadyExists)
 }
 
@@ -117,7 +118,7 @@ func TestAuthServiceSignInReturnsInvalidCredentialsForWrongPassword(t *testing.T
 		IsActive: true,
 	}
 
-	_, err = service.SignIn("user@example.com", "wrong-password")
+	_, err = service.SignIn(context.Background(), "user@example.com", "wrong-password")
 	require.ErrorIs(t, err, errs.InvalidCredentials)
 }
 
@@ -136,6 +137,6 @@ func TestAuthServiceSignInReturnsInvalidCredentialsForInactiveUser(t *testing.T)
 		IsActive: false,
 	}
 
-	_, err = service.SignIn("user@example.com", "password123")
+	_, err = service.SignIn(context.Background(), "user@example.com", "password123")
 	require.ErrorIs(t, err, errs.InvalidCredentials)
 }

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"time"
@@ -31,11 +32,11 @@ func NewAuthService(userStore UserStore, jwtSecret string, jwtExpireHours int) *
 	}
 }
 
-func (s *AuthService) SignUp(email, password, name string) (*AuthResult, error) {
+func (s *AuthService) SignUp(ctx context.Context, email, password, name string) (*AuthResult, error) {
 	email = normalizeEmail(email)
 	name = strings.TrimSpace(name)
 
-	existingUser, err := s.userStore.GetUserByEmail(email)
+	existingUser, err := s.userStore.GetUserByEmail(ctx, email)
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +55,7 @@ func (s *AuthService) SignUp(email, password, name string) (*AuthResult, error) 
 		Name:     name,
 		IsActive: true,
 	}
-	if err := s.userStore.CreateUser(user); err != nil {
+	if err := s.userStore.CreateUser(ctx, user); err != nil {
 		if isDuplicateEmailError(err) {
 			return nil, errs.EmailAlreadyExists
 		}
@@ -72,9 +73,9 @@ func (s *AuthService) SignUp(email, password, name string) (*AuthResult, error) 
 	}, nil
 }
 
-func (s *AuthService) SignIn(email, password string) (*AuthResult, error) {
+func (s *AuthService) SignIn(ctx context.Context, email, password string) (*AuthResult, error) {
 	email = normalizeEmail(email)
-	user, err := s.userStore.GetUserByEmail(email)
+	user, err := s.userStore.GetUserByEmail(ctx, email)
 	if err != nil {
 		return nil, err
 	}
