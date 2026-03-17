@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -22,13 +23,29 @@ type jwtClaims struct {
 	Expires int64  `json:"exp"`
 }
 
-func (s *AuthService) generateToken(userID uint, email string) (string, error) {
+type JWTProvider struct {
+	secret []byte
+	expire time.Duration
+}
+
+func NewJWTProvider(secret string, expireHours int) *JWTProvider {
+	return &JWTProvider{
+		secret: []byte(secret),
+		expire: time.Duration(expireHours) * time.Hour,
+	}
+}
+
+func (p *JWTProvider) Generate(userID uint, email string) (string, error) {
+	if len(p.secret) == 0 {
+		return "", errors.New("jwt secret is empty")
+	}
+
 	issuedAt := time.Now().UTC()
 	claims := jwtClaims{
 		Subject: strconv.FormatUint(uint64(userID), 10),
 		Email:   email,
 		Issued:  issuedAt.Unix(),
-		Expires: issuedAt.Add(s.jwtExpire).Unix(),
+		Expires: issuedAt.Add(p.expire).Unix(),
 	}
 
 	headerPart, err := encodeJWTPart(jwtHeader{
@@ -45,7 +62,7 @@ func (s *AuthService) generateToken(userID uint, email string) (string, error) {
 	}
 
 	unsignedToken := headerPart + "." + claimsPart
-	signature := signJWT(unsignedToken, s.jwtSecret)
+	signature := signJWT(unsignedToken, p.secret)
 
 	return unsignedToken + "." + signature, nil
 }

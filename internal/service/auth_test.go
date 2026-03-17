@@ -77,7 +77,7 @@ func (s *authTestStore) DeleteUser(id uint) error {
 
 func TestAuthServiceSignUpHashesPasswordAndReturnsToken(t *testing.T) {
 	store := newAuthTestStore()
-	service := NewAuthService(store, "test-secret", 24)
+	service := NewAuthService(store, NewJWTProvider("test-secret", 24))
 
 	result, err := service.SignUp(" USER@example.com ", "password123", "  Oak  ")
 	if err != nil {
@@ -106,7 +106,7 @@ func TestAuthServiceSignUpHashesPasswordAndReturnsToken(t *testing.T) {
 
 func TestAuthServiceSignUpRejectsDuplicateEmail(t *testing.T) {
 	store := newAuthTestStore()
-	service := NewAuthService(store, "test-secret", 24)
+	service := NewAuthService(store, NewJWTProvider("test-secret", 24))
 
 	if _, err := service.SignUp("user@example.com", "password123", "Oak"); err != nil {
 		t.Fatalf("first SignUp returned error: %v", err)
@@ -119,7 +119,7 @@ func TestAuthServiceSignUpRejectsDuplicateEmail(t *testing.T) {
 
 func TestAuthServiceSignInReturnsInvalidCredentialsForWrongPassword(t *testing.T) {
 	store := newAuthTestStore()
-	service := NewAuthService(store, "test-secret", 24)
+	service := NewAuthService(store, NewJWTProvider("test-secret", 24))
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
 	if err != nil {
@@ -141,7 +141,7 @@ func TestAuthServiceSignInReturnsInvalidCredentialsForWrongPassword(t *testing.T
 
 func TestAuthServiceSignInRejectsInactiveUser(t *testing.T) {
 	store := newAuthTestStore()
-	service := NewAuthService(store, "test-secret", 24)
+	service := NewAuthService(store, NewJWTProvider("test-secret", 24))
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
 	if err != nil {
