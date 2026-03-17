@@ -35,10 +35,10 @@ func main() {
 	}
 
 	userRepo := repository.NewUserRepository(db)
-	userService := service.NewUserService(userRepo)
-	userHandler := handler.NewUserHandler(userService)
+	authService := service.NewAuthService(userRepo, cfg.JWTSecret, cfg.JWTExpire)
+	authHandler := handler.NewAuthHandler(authService)
 
-	r := router.Setup(userHandler)
+	r := router.Setup(authHandler)
 	if err := r.Run(":" + cfg.Port); err != nil {
 		log.Fatalf("failed to run server: %v", err)
 	}

@@ -6,7 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func Setup(userHandler *handler.UserHandler) *gin.Engine {
+func Setup(userHandler *handler.AuthHandler) *gin.Engine {
 	r := gin.Default()
 
 	r.LoadHTMLGlob("web/templates/*")
@@ -18,7 +18,11 @@ func Setup(userHandler *handler.UserHandler) *gin.Engine {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
-	_ = userHandler
+	auth := r.Group("/auth")
+	{
+		auth.POST("/signup", userHandler.SignUp)
+		auth.POST("/signin", userHandler.SignIn)
+	}
 
 	return r
 }

@@ -14,6 +14,8 @@ type Config struct {
 	DBPort        string
 	DBName        string
 	DBAutoMigrate bool
+	JWTSecret     string
+	JWTExpire     int
 }
 
 func Load() Config {
@@ -25,6 +27,9 @@ func Load() Config {
 		DBPort:        getEnv("DB_PORT"),
 		DBName:        getEnv("DB_NAME"),
 		DBAutoMigrate: getParseEnv("DB_AUTO_MIGRATE", strconv.ParseBool),
+
+		JWTSecret: getEnv("JWT_SECRET"),
+		JWTExpire: getParseEnv("JWT_EXPIRE", strconv.Atoi),
 	}
 }
 
