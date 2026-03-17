@@ -39,3 +39,4 @@ coverage.out
 # Temp
 tmp/
 temp/
+.gocache/
