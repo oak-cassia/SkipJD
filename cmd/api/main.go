@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"net/http"
 	"skipjd/internal/config"
 	"skipjd/internal/database"
 	"skipjd/internal/handler"
@@ -9,6 +10,7 @@ import (
 	"skipjd/internal/repository"
 	"skipjd/internal/router"
 	"skipjd/internal/service"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -39,7 +41,16 @@ func main() {
 	authHandler := handler.NewAuthHandler(authService)
 
 	r := router.Setup(authHandler)
-	if err := r.Run(":" + cfg.Port); err != nil {
+	srv := &http.Server{
+		Addr:              ":" + cfg.Port,
+		Handler:           r,
+		ReadHeaderTimeout: 2 * time.Second,
+		ReadTimeout:       5 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("failed to run server: %v", err)
 	}
 }
