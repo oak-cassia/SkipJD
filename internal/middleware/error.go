@@ -41,6 +41,8 @@ func classifyError(err error) (int, string) {
 		return http.StatusConflict, "email already exists"
 	case errs.InvalidCredentials:
 		return http.StatusUnauthorized, "invalid email or password"
+	case errs.InvalidToken:
+		return http.StatusUnauthorized, "invalid or expired token"
 	default:
 		return http.StatusInternalServerError, "internal server error"
 	}

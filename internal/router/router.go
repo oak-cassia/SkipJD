@@ -3,11 +3,12 @@ package router
 import (
 	"skipjd/internal/handler"
 	"skipjd/internal/middleware"
+	"skipjd/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
 
-func Setup(userHandler *handler.AuthHandler) *gin.Engine {
+func Setup(userHandler *handler.AuthHandler, authService *service.AuthService, signInLimiter gin.HandlerFunc) *gin.Engine {
 	r := gin.Default()
 	r.Use(middleware.ErrorHandler())
 
@@ -23,7 +24,8 @@ func Setup(userHandler *handler.AuthHandler) *gin.Engine {
 	auth := r.Group("/auth")
 	{
 		auth.POST("/signup", userHandler.SignUp)
-		auth.POST("/signin", userHandler.SignIn)
+		auth.POST("/signin", signInLimiter, userHandler.SignIn)
+		auth.GET("/me", middleware.RequireAuth(authService), userHandler.Me)
 	}
 
 	return r

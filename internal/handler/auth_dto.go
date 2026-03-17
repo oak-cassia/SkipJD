@@ -24,6 +24,11 @@ type authResponse struct {
 	User  authUserResponse `json:"user"`
 }
 
+type meResponse struct {
+	ID    uint   `json:"id"`
+	Email string `json:"email"`
+}
+
 func toAuthResponse(result *service.AuthResult) authResponse {
 	return authResponse{
 		Token: result.Token,

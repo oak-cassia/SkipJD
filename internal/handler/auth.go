@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"skipjd/internal/errs"
+	"skipjd/internal/middleware"
 	"skipjd/internal/service"
 	"time"
 
@@ -56,4 +57,33 @@ func (h *AuthHandler) SignIn(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, toAuthResponse(result))
+}
+
+func (h *AuthHandler) Me(c *gin.Context) {
+	userIDRaw, ok := c.Get(middleware.ContextUserIDKey)
+	if !ok {
+		c.Error(errs.InvalidToken)
+		return
+	}
+	userID, ok := userIDRaw.(uint)
+	if !ok {
+		c.Error(errs.InvalidToken)
+		return
+	}
+
+	emailRaw, ok := c.Get(middleware.ContextUserEmailKey)
+	if !ok {
+		c.Error(errs.InvalidToken)
+		return
+	}
+	email, ok := emailRaw.(string)
+	if !ok {
+		c.Error(errs.InvalidToken)
+		return
+	}
+
+	c.JSON(http.StatusOK, meResponse{
+		ID:    userID,
+		Email: email,
+	})
 }

@@ -1,66 +1,72 @@
 package service
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/json"
-	"fmt"
+	"errors"
 	"strconv"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
-type jwtHeader struct {
-	Alg string `json:"alg"`
-	Typ string `json:"typ"`
+type authClaimsPayload struct {
+	Email string `json:"email"`
+	jwt.RegisteredClaims
 }
 
-type jwtClaims struct {
-	Subject string `json:"sub"`
-	Email   string `json:"email"`
-	Issued  int64  `json:"iat"`
-	Expires int64  `json:"exp"`
+type AuthClaims struct {
+	UserID    uint
+	Email     string
+	IssuedAt  time.Time
+	ExpiresAt time.Time
 }
 
 func (s *AuthService) generateToken(userID uint, email string) (string, error) {
 	issuedAt := time.Now().UTC()
-	claims := jwtClaims{
-		Subject: strconv.FormatUint(uint64(userID), 10),
-		Email:   email,
-		Issued:  issuedAt.Unix(),
-		Expires: issuedAt.Add(s.jwtExpire).Unix(),
+	claims := authClaimsPayload{
+		Email: email,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   strconv.FormatUint(uint64(userID), 10),
+			IssuedAt:  jwt.NewNumericDate(issuedAt),
+			ExpiresAt: jwt.NewNumericDate(issuedAt.Add(s.jwtExpire)),
+		},
 	}
 
-	headerPart, err := encodeJWTPart(jwtHeader{
-		Alg: "HS256",
-		Typ: "JWT",
-	})
-	if err != nil {
-		return "", err
-	}
-
-	claimsPart, err := encodeJWTPart(claims)
-	if err != nil {
-		return "", err
-	}
-
-	unsignedToken := headerPart + "." + claimsPart
-	signature := signJWT(unsignedToken, s.jwtSecret)
-
-	return unsignedToken + "." + signature, nil
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(s.jwtSecret)
 }
 
-func encodeJWTPart(v any) (string, error) {
-	b, err := json.Marshal(v)
+func (s *AuthService) ParseToken(token string) (*AuthClaims, error) {
+	var claims authClaimsPayload
+	parsedToken, err := jwt.ParseWithClaims(
+		token,
+		&claims,
+		func(parsedToken *jwt.Token) (any, error) {
+			if parsedToken.Method == nil || parsedToken.Method.Alg() != jwt.SigningMethodHS256.Alg() {
+				return nil, errors.New("unexpected signing method")
+			}
+			return s.jwtSecret, nil
+		},
+		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
+	)
 	if err != nil {
-		return "", fmt.Errorf("marshal jwt part: %w", err)
+		return nil, err
+	}
+	if !parsedToken.Valid {
+		return nil, errors.New("invalid token")
+	}
+	if claims.ExpiresAt == nil || claims.IssuedAt == nil {
+		return nil, errors.New("missing required claims")
 	}
 
-	return base64.RawURLEncoding.EncodeToString(b), nil
-}
+	userID, err := strconv.ParseUint(claims.Subject, 10, 64)
+	if err != nil {
+		return nil, errors.New("invalid sub claim")
+	}
 
-func signJWT(unsignedToken string, secret []byte) string {
-	mac := hmac.New(sha256.New, secret)
-	mac.Write([]byte(unsignedToken))
-	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return &AuthClaims{
+		UserID:    uint(userID),
+		Email:     claims.Email,
+		IssuedAt:  claims.IssuedAt.Time.UTC(),
+		ExpiresAt: claims.ExpiresAt.Time.UTC(),
+	}, nil
 }
