@@ -26,13 +26,13 @@ func (h *AuthHandler) SignUp(c *gin.Context) {
 
 	var req signUpRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.Error(errs.InvalidRequest)
+		_ = c.Error(errs.InvalidRequest)
 		return
 	}
 
 	result, err := h.authService.SignUp(ctx, req.Email, req.Password, req.Name)
 	if err != nil {
-		c.Error(err)
+		_ = c.Error(err)
 		return
 	}
 
@@ -45,13 +45,13 @@ func (h *AuthHandler) SignIn(c *gin.Context) {
 
 	var req signInRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.Error(errs.InvalidRequest)
+		_ = c.Error(errs.InvalidRequest)
 		return
 	}
 
 	result, err := h.authService.SignIn(ctx, req.Email, req.Password)
 	if err != nil {
-		c.Error(err)
+		_ = c.Error(err)
 		return
 	}
 
