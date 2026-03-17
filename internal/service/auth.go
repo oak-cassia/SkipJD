@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"strings"
+	"time"
 
 	"skipjd/internal/model"
 
@@ -11,8 +12,9 @@ import (
 )
 
 type AuthService struct {
-	userStore     UserStore
-	tokenProvider TokenProvider
+	userStore UserStore
+	jwtSecret []byte
+	jwtExpire time.Duration
 }
 
 var (
@@ -26,10 +28,11 @@ type AuthResult struct {
 	User  model.User
 }
 
-func NewAuthService(userStore UserStore, tokenProvider TokenProvider) *AuthService {
+func NewAuthService(userStore UserStore, jwtSecret string, jwtExpireHours int) *AuthService {
 	return &AuthService{
-		userStore:     userStore,
-		tokenProvider: tokenProvider,
+		userStore: userStore,
+		jwtSecret: []byte(jwtSecret),
+		jwtExpire: time.Duration(jwtExpireHours) * time.Hour,
 	}
 }
 
@@ -56,7 +59,6 @@ func (s *AuthService) SignUp(email, password, name string) (*AuthResult, error) 
 		Name:     name,
 		IsActive: true,
 	}
-
 	if err := s.userStore.CreateUser(user); err != nil {
 		if isDuplicateEmailError(err) {
 			return nil, ErrEmailAlreadyExists
@@ -77,7 +79,6 @@ func (s *AuthService) SignUp(email, password, name string) (*AuthResult, error) 
 
 func (s *AuthService) SignIn(email, password string) (*AuthResult, error) {
 	email = normalizeEmail(email)
-
 	user, err := s.userStore.GetUserByEmail(email)
 	if err != nil {
 		return nil, err
@@ -88,7 +89,6 @@ func (s *AuthService) SignIn(email, password string) (*AuthResult, error) {
 	if !user.IsActive {
 		return nil, ErrInactiveUser
 	}
-
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
 		return nil, ErrInvalidCredentials
 	}
@@ -111,11 +111,4 @@ func normalizeEmail(email string) string {
 func isDuplicateEmailError(err error) bool {
 	var mysqlErr *mysqlDriver.MySQLError
 	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1062
-}
-
-func (s *AuthService) generateToken(userID uint, email string) (string, error) {
-	if s.tokenProvider == nil {
-		return "", errors.New("token provider is not configured")
-	}
-	return s.tokenProvider.Generate(userID, email)
 }

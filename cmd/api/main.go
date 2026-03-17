@@ -35,8 +35,7 @@ func main() {
 	}
 
 	userRepo := repository.NewUserRepository(db)
-	jwtProvider := service.NewJWTProvider(cfg.JWTSecret, cfg.JWTExpire)
-	authService := service.NewAuthService(userRepo, jwtProvider)
+	authService := service.NewAuthService(userRepo, cfg.JWTSecret, cfg.JWTExpire)
 	authHandler := handler.NewAuthHandler(authService)
 
 	r := router.Setup(authHandler)

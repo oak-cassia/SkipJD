@@ -9,15 +9,10 @@ import (
 )
 
 type AuthHandler struct {
-	authService authService
+	authService *service.AuthService
 }
 
-type authService interface {
-	SignUp(email, password, name string) (*service.AuthResult, error)
-	SignIn(email, password string) (*service.AuthResult, error)
-}
-
-func NewAuthHandler(authService authService) *AuthHandler {
+func NewAuthHandler(authService *service.AuthService) *AuthHandler {
 	return &AuthHandler{authService: authService}
 }
 
