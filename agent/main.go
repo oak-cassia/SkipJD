@@ -7,13 +7,18 @@ import (
 	"os"
 
 	"google.golang.org/adk/agent"
-	"google.golang.org/adk/cmd/launcher"
-	"google.golang.org/adk/cmd/launcher/full"
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/model/gemini"
+	"google.golang.org/adk/runner"
+	"google.golang.org/adk/session"
 	"google.golang.org/genai"
 	"gopkg.in/yaml.v3"
 )
+
+const appName = "browser_agent"
+const userID = "default_user"
+const sessionID = "default_session"
+const defaultTargetSite = "https://www.gamejob.co.kr/Recruit/joblist?menucode=duty"
 
 func main() {
 	ctx := context.Background()
@@ -23,14 +28,74 @@ func main() {
 		log.Fatalf("Failed to create agent: %v", err)
 	}
 
-	config := &launcher.Config{
-		AgentLoader: agent.NewSingleLoader(rootAgent),
+	sessionService := session.InMemoryService()
+	resp, err := sessionService.Create(ctx, &session.CreateRequest{
+		AppName:   appName,
+		UserID:    userID,
+		SessionID: sessionID,
+		State: map[string]any{
+			"target_site": defaultTargetSite,
+			"preferred_companies": []string{
+				//"넥슨",
+				//"크래프톤",
+				//"엔씨소프트",
+				"데브시스터즈",
+				//"스마일게이트",
+				//"넷마블",
+			},
+			"preferred_positions": []string{
+				"게임 서버",
+				//"AI",
+				//"AX",
+			},
+		},
+	})
+	if err != nil {
+		log.Fatalf("Failed to create session: %v", err)
 	}
 
-	l := full.NewLauncher()
-	if err = l.Execute(ctx, config, os.Args[1:]); err != nil {
-		log.Fatalf("Run failed: %v\n\n%s", err, l.CommandLineSyntax())
+	r, err := runner.New(runner.Config{
+		AppName:        appName,
+		Agent:          rootAgent,
+		SessionService: sessionService,
+	})
+	if err != nil {
+		log.Fatalf("Failed to create runner: %v", err)
 	}
+
+	currentSession := resp.Session
+	for _, err := range r.Run(
+		ctx,
+		userID,
+		currentSession.ID(),
+		genai.NewContentFromText("run", "user"),
+		agent.RunConfig{},
+	) {
+		if err != nil {
+			log.Fatalf("Agent run failed: %v", err)
+		}
+	}
+
+	getResp, err := sessionService.Get(ctx, &session.GetRequest{
+		AppName:   appName,
+		UserID:    userID,
+		SessionID: currentSession.ID(),
+	})
+	if err != nil {
+		log.Fatalf("Failed to load session: %v", err)
+	}
+
+	output, err := getResp.Session.State().Get("collected_postings")
+	if err != nil {
+		log.Fatalf("Failed to load collected_postings from session state: %v", err)
+	}
+
+	outputText, ok := output.(string)
+	if !ok {
+		log.Fatalf("Unexpected collected_postings type: %T", output)
+	}
+
+	fmt.Println(outputText)
 }
 
 type AgentConfig struct {
