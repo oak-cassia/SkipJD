@@ -18,7 +18,7 @@ import (
 const appName = "browser_agent"
 const userID = "default_user"
 const sessionID = "default_session"
-const defaultTargetSite = "https://www.gamejob.co.kr/Recruit/joblist?menucode=duty"
+const defaultTargetSite = "target_site"
 
 func main() {
 	ctx := context.Background()
@@ -64,7 +64,7 @@ func main() {
 	}
 
 	currentSession := resp.Session
-	for _, err := range r.Run(
+	for event, err := range r.Run(
 		ctx,
 		userID,
 		currentSession.ID(),
@@ -73,6 +73,21 @@ func main() {
 	) {
 		if err != nil {
 			log.Fatalf("Agent run failed: %v", err)
+		}
+
+		fmt.Printf("Event: %s partial=%v author=%s\n", event.ID, event.Partial, event.Author)
+
+		if event.UsageMetadata != nil {
+			u := event.UsageMetadata
+			fmt.Printf(
+				"tokens prompt=%d candidates=%d thoughts=%d tool_use=%d cached=%d total=%d\n",
+				u.PromptTokenCount,
+				u.CandidatesTokenCount,
+				u.ThoughtsTokenCount,
+				u.ToolUsePromptTokenCount,
+				u.CachedContentTokenCount,
+				u.TotalTokenCount,
+			)
 		}
 	}
 
