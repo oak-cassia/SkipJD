@@ -10,4 +10,5 @@ instruction: |-
   - company
   - closing_date
   - url
+  - min_experience_years (0 if unspecified)
   Return the collected postings as structured JSON in the format {"postings":[...]}.

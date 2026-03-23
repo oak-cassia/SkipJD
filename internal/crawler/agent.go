@@ -70,11 +70,14 @@ func newBrowserAgent(ctx context.Context, configPath string) (agent.Agent, error
 							"company": {
 								Type: "string",
 							},
+							"url": {
+								Type: "string",
+							},
 							"closing_date": {
 								Type: "string",
 							},
-							"url": {
-								Type: "string",
+							"min_experience_years": {
+								Type: "integer",
 							},
 						},
 						Required: []string{"title", "company", "closing_date", "url"},
