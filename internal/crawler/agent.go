@@ -1,18 +1,19 @@
-package main
+package crawler
 
 import (
 	"context"
+	"os"
 
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/agent/llmagent"
+	"google.golang.org/adk/model"
+	"google.golang.org/adk/model/gemini"
 	"google.golang.org/adk/tool"
 	"google.golang.org/genai"
 )
 
-const agentConfigPath = "agent.yaml"
-
-func newBrowserAgent(ctx context.Context) (agent.Agent, error) {
-	cfg, err := loadAgentConfig(agentConfigPath)
+func newBrowserAgent(ctx context.Context, configPath string) (agent.Agent, error) {
+	cfg, err := loadAgentConfig(configPath)
 	if err != nil {
 		return nil, err
 	}
@@ -32,7 +33,7 @@ func newBrowserAgent(ctx context.Context) (agent.Agent, error) {
 		Model:       modelInstance,
 		Description: cfg.Description,
 		Instruction: cfg.Instruction,
-		OutputKey:   "collected_postings",
+		OutputKey:   collectedPostingsKey,
 		Toolsets:    []tool.Toolset{playwrightToolset},
 		InputSchema: &genai.Schema{
 			Type: "object",
@@ -82,5 +83,11 @@ func newBrowserAgent(ctx context.Context) (agent.Agent, error) {
 			},
 			Required: []string{"postings"},
 		},
+	})
+}
+
+func newModel(ctx context.Context, modelID string) (model.LLM, error) {
+	return gemini.NewModel(ctx, modelID, &genai.ClientConfig{
+		APIKey: os.Getenv("GOOGLE_API_KEY"),
 	})
 }
