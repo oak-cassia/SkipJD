@@ -149,7 +149,7 @@ func (c *AICrawler) Run(ctx context.Context) (err error) {
 	if err := c.crawlerRepository.CreateCrawlRun(ctx, &model.CrawlRun{
 		Source:     appName,
 		StartedAt:  startedAt,
-		FinishedAt: new(time.Now().Local()),
+		FinishedAt: time.Now().Local(),
 	}); err != nil {
 		return fmt.Errorf("create crawl run: %w", err)
 	}
