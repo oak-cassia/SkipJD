@@ -5,14 +5,16 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"google.golang.org/adk/agent"
-	"google.golang.org/adk/model"
+	adkmodel "google.golang.org/adk/model"
 	"google.golang.org/adk/model/gemini"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
 	"google.golang.org/genai"
 
+	"skipjd/internal/model"
 	"skipjd/internal/repository"
 )
 
@@ -25,12 +27,16 @@ const collectedPostingsKey = "collected_postings"
 type AICrawler struct {
 	out io.Writer
 
-	crawlerRepository repository.CrawlerRepository
+	crawlerRepository *repository.CrawlerRepository
 	sessionService    session.Service
 	rootAgent         agent.Agent
 }
 
-func NewAICrawler(ctx context.Context, configPath string, out io.Writer, crawlerRepository repository.CrawlerRepository) (*AICrawler, error) {
+func NewAICrawler(ctx context.Context, configPath string, out io.Writer, crawlerRepository *repository.CrawlerRepository) (*AICrawler, error) {
+	if crawlerRepository == nil {
+		return nil, fmt.Errorf("crawler repository is required")
+	}
+
 	cfg, err := loadAgentConfig(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("load agent config: %w", err)
@@ -58,7 +64,9 @@ func NewAICrawler(ctx context.Context, configPath string, out io.Writer, crawler
 	}, nil
 }
 
-func (c *AICrawler) Run(ctx context.Context) error {
+func (c *AICrawler) Run(ctx context.Context) (err error) {
+	startedAt := time.Now().Local()
+
 	resp, err := c.sessionService.Create(ctx, &session.CreateRequest{
 		AppName:   appName,
 		UserID:    userID,
@@ -138,6 +146,14 @@ func (c *AICrawler) Run(ctx context.Context) error {
 		return fmt.Errorf("unexpected %s type: %T", collectedPostingsKey, output)
 	}
 
+	if err := c.crawlerRepository.CreateCrawlRun(ctx, &model.CrawlRun{
+		Source:     appName,
+		StartedAt:  startedAt,
+		FinishedAt: new(time.Now().Local()),
+	}); err != nil {
+		return fmt.Errorf("create crawl run: %w", err)
+	}
+
 	if _, err := fmt.Fprintln(c.out, outputText); err != nil {
 		return fmt.Errorf("write crawl output: %w", err)
 	}
@@ -145,8 +161,8 @@ func (c *AICrawler) Run(ctx context.Context) error {
 	return nil
 }
 
-func Run(ctx context.Context, configPath string) error {
-	crawler, err := NewAICrawler(ctx, configPath, os.Stdout, repository.CrawlerRepository{})
+func Run(ctx context.Context, configPath string, crawlerRepository *repository.CrawlerRepository) error {
+	crawler, err := NewAICrawler(ctx, configPath, os.Stdout, crawlerRepository)
 	if err != nil {
 		return err
 	}
@@ -154,7 +170,7 @@ func Run(ctx context.Context, configPath string) error {
 	return crawler.Run(ctx)
 }
 
-func newModel(ctx context.Context, modelID string) (model.LLM, error) {
+func newModel(ctx context.Context, modelID string) (adkmodel.LLM, error) {
 	return gemini.NewModel(ctx, modelID, &genai.ClientConfig{
 		APIKey: os.Getenv("GOOGLE_API_KEY"),
 	})
