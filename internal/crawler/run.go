@@ -3,11 +3,17 @@ package crawler
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 
 	"google.golang.org/adk/agent"
+	"google.golang.org/adk/model"
+	"google.golang.org/adk/model/gemini"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
 	"google.golang.org/genai"
+
+	"skipjd/internal/repository"
 )
 
 const appName = "browser_agent"
@@ -16,14 +22,44 @@ const sessionID = "default_session"
 const defaultTargetSite = "target_site"
 const collectedPostingsKey = "collected_postings"
 
-func Run(ctx context.Context, configPath string) error {
-	rootAgent, err := newBrowserAgent(ctx, configPath)
+type AICrawler struct {
+	out io.Writer
+
+	crawlerRepository repository.CrawlerRepository
+	sessionService    session.Service
+	rootAgent         agent.Agent
+}
+
+func NewAICrawler(ctx context.Context, configPath string, out io.Writer, crawlerRepository repository.CrawlerRepository) (*AICrawler, error) {
+	cfg, err := loadAgentConfig(configPath)
 	if err != nil {
-		return fmt.Errorf("create agent: %w", err)
+		return nil, fmt.Errorf("load agent config: %w", err)
 	}
 
-	sessionService := session.InMemoryService()
-	resp, err := sessionService.Create(ctx, &session.CreateRequest{
+	modelInstance, err := newModel(ctx, cfg.ModelID)
+	if err != nil {
+		return nil, fmt.Errorf("create model: %w", err)
+	}
+
+	rootAgent, err := newBrowserAgent(cfg, modelInstance)
+	if err != nil {
+		return nil, fmt.Errorf("create agent: %w", err)
+	}
+
+	if out == nil {
+		out = io.Discard
+	}
+
+	return &AICrawler{
+		out:               out,
+		crawlerRepository: crawlerRepository,
+		sessionService:    session.InMemoryService(),
+		rootAgent:         rootAgent,
+	}, nil
+}
+
+func (c *AICrawler) Run(ctx context.Context) error {
+	resp, err := c.sessionService.Create(ctx, &session.CreateRequest{
 		AppName:   appName,
 		UserID:    userID,
 		SessionID: sessionID,
@@ -43,8 +79,8 @@ func Run(ctx context.Context, configPath string) error {
 
 	r, err := runner.New(runner.Config{
 		AppName:        appName,
-		Agent:          rootAgent,
-		SessionService: sessionService,
+		Agent:          c.rootAgent,
+		SessionService: c.sessionService,
 	})
 	if err != nil {
 		return fmt.Errorf("create runner: %w", err)
@@ -62,11 +98,14 @@ func Run(ctx context.Context, configPath string) error {
 			return fmt.Errorf("agent run failed: %w", err)
 		}
 
-		fmt.Printf("Event: %s partial=%v author=%s\n", event.ID, event.Partial, event.Author)
+		if _, err := fmt.Fprintf(c.out, "Event: %s partial=%v author=%s\n", event.ID, event.Partial, event.Author); err != nil {
+			return fmt.Errorf("write event output: %w", err)
+		}
 
 		if event.UsageMetadata != nil {
 			u := event.UsageMetadata
-			fmt.Printf(
+			if _, err := fmt.Fprintf(
+				c.out,
 				"tokens prompt=%d candidates=%d thoughts=%d tool_use=%d cached=%d total=%d\n",
 				u.PromptTokenCount,
 				u.CandidatesTokenCount,
@@ -74,11 +113,13 @@ func Run(ctx context.Context, configPath string) error {
 				u.ToolUsePromptTokenCount,
 				u.CachedContentTokenCount,
 				u.TotalTokenCount,
-			)
+			); err != nil {
+				return fmt.Errorf("write token output: %w", err)
+			}
 		}
 	}
 
-	getResp, err := sessionService.Get(ctx, &session.GetRequest{
+	getResp, err := c.sessionService.Get(ctx, &session.GetRequest{
 		AppName:   appName,
 		UserID:    userID,
 		SessionID: currentSession.ID(),
@@ -97,6 +138,24 @@ func Run(ctx context.Context, configPath string) error {
 		return fmt.Errorf("unexpected %s type: %T", collectedPostingsKey, output)
 	}
 
-	fmt.Println(outputText)
+	if _, err := fmt.Fprintln(c.out, outputText); err != nil {
+		return fmt.Errorf("write crawl output: %w", err)
+	}
+
 	return nil
+}
+
+func Run(ctx context.Context, configPath string) error {
+	crawler, err := NewAICrawler(ctx, configPath, os.Stdout, repository.CrawlerRepository{})
+	if err != nil {
+		return err
+	}
+
+	return crawler.Run(ctx)
+}
+
+func newModel(ctx context.Context, modelID string) (model.LLM, error) {
+	return gemini.NewModel(ctx, modelID, &genai.ClientConfig{
+		APIKey: os.Getenv("GOOGLE_API_KEY"),
+	})
 }
