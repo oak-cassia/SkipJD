@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"skipjd/internal/model"
@@ -28,6 +29,24 @@ func (r *CrawlerRepository) FinishCrawlRun(ctx context.Context, id uint, finishe
 		Where("id = ?", id).
 		Update("finished_at", finishedAt).
 		Error
+}
+
+func (r *CrawlerRepository) GetLatestFinishedAtBySource(ctx context.Context, source string) (*time.Time, error) {
+	var crawlRun model.CrawlRun
+	err := r.db.WithContext(ctx).
+		Select("finished_at").
+		Where("source = ?", source).
+		Order("finished_at DESC").
+		Take(&crawlRun).
+		Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return new(crawlRun.FinishedAt), nil
 }
 
 func (r *CrawlerRepository) UpsertJobPostings(ctx context.Context, postings []model.JobPosting) error {

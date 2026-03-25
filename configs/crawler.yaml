@@ -1,10 +1,11 @@
 name: browser_agent
-model: gemini-3.1-flash-lite-preview
+model: gemini-3-flash-preview
 description: Agent with Playwright MCP browser automation tools.
 instruction: |-
   Use the Playwright MCP tools to browse {target_site}, inspect pages, and interact with web content.
   Search for job postings from these companies: {preferred_companies}.
   Search for roles related to: {preferred_positions}.
+  Find only job postings posted or updated after {last_updated}, and exclude any posting earlier than that.
   For each relevant posting, extract:
   - title
   - company

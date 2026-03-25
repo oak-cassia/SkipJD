@@ -27,9 +27,10 @@ const collectedPostingsKey = "collected_postings"
 type AICrawler struct {
 	out io.Writer
 
-	crawlerRepository *repository.CrawlerRepository
+	crawlerRepository crawlRunRepository
 	sessionService    session.Service
 	rootAgent         agent.Agent
+	now               func() time.Time
 }
 
 func NewAICrawler(ctx context.Context, configPath string, out io.Writer, crawlerRepository *repository.CrawlerRepository) (*AICrawler, error) {
@@ -61,25 +62,23 @@ func NewAICrawler(ctx context.Context, configPath string, out io.Writer, crawler
 		crawlerRepository: crawlerRepository,
 		sessionService:    session.InMemoryService(),
 		rootAgent:         rootAgent,
+		now:               time.Now,
 	}, nil
 }
 
 func (c *AICrawler) Run(ctx context.Context) (err error) {
-	startedAt := time.Now().Local()
+	startedAt := c.now().Local()
+
+	state, err := c.buildSessionState(ctx)
+	if err != nil {
+		return err
+	}
 
 	resp, err := c.sessionService.Create(ctx, &session.CreateRequest{
 		AppName:   appName,
 		UserID:    userID,
 		SessionID: sessionID,
-		State: map[string]any{
-			"target_site": defaultTargetSite,
-			"preferred_companies": []string{
-				"데브시스터즈",
-			},
-			"preferred_positions": []string{
-				"게임 서버",
-			},
-		},
+		State:     state,
 	})
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
@@ -149,7 +148,7 @@ func (c *AICrawler) Run(ctx context.Context) (err error) {
 	if err := c.crawlerRepository.CreateCrawlRun(ctx, &model.CrawlRun{
 		Source:     appName,
 		StartedAt:  startedAt,
-		FinishedAt: time.Now().Local(),
+		FinishedAt: c.now().Local(),
 	}); err != nil {
 		return fmt.Errorf("create crawl run: %w", err)
 	}
@@ -174,4 +173,39 @@ func newModel(ctx context.Context, modelID string) (adkmodel.LLM, error) {
 	return gemini.NewModel(ctx, modelID, &genai.ClientConfig{
 		APIKey: os.Getenv("GOOGLE_API_KEY"),
 	})
+}
+
+type crawlRunRepository interface {
+	CreateCrawlRun(ctx context.Context, crawlRun *model.CrawlRun) error
+	GetLatestFinishedAtBySource(ctx context.Context, source string) (*time.Time, error)
+}
+
+func (c *AICrawler) buildSessionState(ctx context.Context) (map[string]any, error) {
+	lastUpdated, err := c.resolveLastUpdated(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]any{
+		"target_site": defaultTargetSite,
+		"preferred_companies": []string{
+			"크래프톤",
+		},
+		"preferred_positions": []string{
+			"게임 서버", "AX",
+		},
+		"last_updated": lastUpdated.Format(time.RFC3339),
+	}, nil
+}
+
+func (c *AICrawler) resolveLastUpdated(ctx context.Context) (time.Time, error) {
+	latestFinishedAt, err := c.crawlerRepository.GetLatestFinishedAtBySource(ctx, appName)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("get latest finished_at by source: %w", err)
+	}
+	if latestFinishedAt != nil {
+		return *latestFinishedAt, nil
+	}
+
+	return c.now().AddDate(0, 0, -14), nil
 }
