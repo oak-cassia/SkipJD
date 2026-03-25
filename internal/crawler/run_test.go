@@ -68,10 +68,13 @@ type stubCrawlRunRepository struct {
 }
 
 func (r *stubCrawlRunRepository) CreateCrawlRun(ctx context.Context, crawlRun *model.CrawlRun) error {
+	_ = ctx
+	_ = crawlRun
 	return nil
 }
 
 func (r *stubCrawlRunRepository) GetLatestFinishedAtBySource(ctx context.Context, source string) (*time.Time, error) {
+	_ = ctx
 	r.lastSource = source
 	return r.latestFinishedAt, nil
 }
