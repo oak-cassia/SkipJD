@@ -24,7 +24,7 @@ import (
 const appName = "browser_agent"
 const userID = "default_user"
 const sessionID = "default_session"
-const defaultTargetSite = "target_site"
+const defaultTargetSite = "https://www.gamejob.co.kr/Recruit/Main"
 const collectedPostingsKey = "collected_postings"
 
 type AICrawler struct {
