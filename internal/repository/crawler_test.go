@@ -94,6 +94,59 @@ func TestUpsertJobPostingsUpdatesExistingPosting(t *testing.T) {
 	assert.True(t, posting.LastSeenAt.Equal(lastSeenAt))
 }
 
+func TestGetExistingSourceKeysReturnsOnlyMatchedKeys(t *testing.T) {
+	repo := NewCrawlerRepository(newCrawlerTestDB(t))
+	ctx := context.Background()
+	seenAt := time.Date(2026, 3, 31, 10, 0, 0, 0, time.UTC)
+
+	require.NoError(t, repo.UpsertJobPostings(ctx, []model.JobPosting{
+		{
+			Source:      "browser_agent",
+			SourceKey:   "jobs/example/1",
+			Title:       "Backend Engineer",
+			Company:     "Krafton",
+			URL:         "https://jobs.example.com/postings/1",
+			ClosingDate: "채용 시 마감",
+			FirstSeenAt: seenAt,
+			LastSeenAt:  seenAt,
+		},
+		{
+			Source:      "browser_agent",
+			SourceKey:   "jobs/example/2",
+			Title:       "AI Engineer",
+			Company:     "Krafton",
+			URL:         "https://jobs.example.com/postings/2",
+			ClosingDate: "채용 시 마감",
+			FirstSeenAt: seenAt,
+			LastSeenAt:  seenAt,
+		},
+		{
+			Source:      "other_source",
+			SourceKey:   "jobs/example/3",
+			Title:       "Server Engineer",
+			Company:     "Other",
+			URL:         "https://jobs.example.com/postings/3",
+			ClosingDate: "채용 시 마감",
+			FirstSeenAt: seenAt,
+			LastSeenAt:  seenAt,
+		},
+	}))
+
+	existing, err := repo.GetExistingSourceKeys(ctx, "browser_agent", []string{
+		"jobs/example/1",
+		"jobs/example/3",
+		"jobs/example/missing",
+	})
+	require.NoError(t, err)
+
+	_, hasFirst := existing["jobs/example/1"]
+	_, hasOtherSource := existing["jobs/example/3"]
+	_, hasMissing := existing["jobs/example/missing"]
+	assert.True(t, hasFirst)
+	assert.False(t, hasOtherSource)
+	assert.False(t, hasMissing)
+}
+
 func newCrawlerTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 

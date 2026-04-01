@@ -49,6 +49,30 @@ func (r *CrawlerRepository) GetLatestFinishedAtBySource(ctx context.Context, sou
 	return new(crawlRun.FinishedAt), nil
 }
 
+func (r *CrawlerRepository) GetExistingSourceKeys(ctx context.Context, source string, sourceKeys []string) (map[string]struct{}, error) {
+	if len(sourceKeys) == 0 {
+		return map[string]struct{}{}, nil
+	}
+
+	rows := make([]struct {
+		SourceKey string
+	}, 0, len(sourceKeys))
+	if err := r.db.WithContext(ctx).
+		Model(&model.JobPosting{}).
+		Select("source_key").
+		Where("source = ? AND source_key IN ?", source, sourceKeys).
+		Find(&rows).
+		Error; err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		result[row.SourceKey] = struct{}{}
+	}
+	return result, nil
+}
+
 func (r *CrawlerRepository) UpsertJobPostings(ctx context.Context, postings []model.JobPosting) error {
 	if len(postings) == 0 {
 		return nil
