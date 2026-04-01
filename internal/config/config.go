@@ -2,8 +2,10 @@ package config
 
 import (
 	"fmt"
+	"net/mail"
 	"os"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -13,7 +15,15 @@ type Config struct {
 	DBPort       string
 	DBName       string
 	RequireDBTLS bool
+	SMTPHost     string
+	SMTPPort     int
+	SMTPUser     string
+	SMTPPass     string
+	MailFrom     string
+	MailTo       string
 }
+
+const requiredSMTPPort = 587
 
 func Load() Config {
 	return Config{
@@ -23,7 +33,21 @@ func Load() Config {
 		DBPort:       getEnv("DB_PORT"),
 		DBName:       getEnv("DB_NAME"),
 		RequireDBTLS: getParseEnvOrDefault("REQUIRE_DB_TLS", false, strconv.ParseBool),
+		SMTPHost:     getEnv("SMTP_HOST"),
+		SMTPPort:     getSMTPPort(),
+		SMTPUser:     getEnv("SMTP_USER"),
+		SMTPPass:     getEnv("SMTP_PASS"),
+		MailFrom:     getSingleAddressEnv("MAIL_FROM"),
+		MailTo:       getSingleAddressEnv("MAIL_TO"),
 	}
+}
+
+func getSMTPPort() int {
+	port := getParseEnv("SMTP_PORT", strconv.Atoi)
+	if port != requiredSMTPPort {
+		panic(fmt.Sprintf("invalid env SMTP_PORT=%q: only %d is supported", strconv.Itoa(port), requiredSMTPPort))
+	}
+	return port
 }
 
 func getEnv(key string) string {
@@ -57,4 +81,21 @@ func getParseEnvOrDefault[T any](key string, defaultValue T, parse func(string) 
 	}
 
 	return parsed
+}
+
+func getSingleAddressEnv(key string) string {
+	v := strings.TrimSpace(getEnv(key))
+	if strings.Contains(v, ",") {
+		panic(fmt.Sprintf("invalid env %s=%q: only one email address is allowed", key, v))
+	}
+
+	addr, err := mail.ParseAddress(v)
+	if err != nil {
+		panic(fmt.Sprintf("invalid env %s=%q: %v", key, v, err))
+	}
+	if addr.Address != v {
+		panic(fmt.Sprintf("invalid env %s=%q: plain email address required", key, v))
+	}
+
+	return v
 }
