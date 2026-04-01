@@ -17,6 +17,7 @@ import (
 	"google.golang.org/adk/session"
 	"google.golang.org/genai"
 
+	"skipjd/internal/config"
 	"skipjd/internal/model"
 	"skipjd/internal/repository"
 )
@@ -33,6 +34,7 @@ type AICrawler struct {
 	crawlerRepository crawlRunRepository
 	sessionService    session.Service
 	rootAgent         agent.Agent
+	mailer            Mailer
 	now               func() time.Time
 }
 
@@ -41,17 +43,17 @@ func NewAICrawler(ctx context.Context, configPath string, out io.Writer, crawler
 		return nil, fmt.Errorf("crawler repository is required")
 	}
 
-	cfg, err := loadAgentConfig(configPath)
+	agentCfg, err := loadAgentConfig(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("load agent config: %w", err)
 	}
 
-	modelInstance, err := newModel(ctx, cfg.ModelID)
+	modelInstance, err := newModel(ctx, agentCfg.ModelID)
 	if err != nil {
 		return nil, fmt.Errorf("create model: %w", err)
 	}
 
-	rootAgent, err := newBrowserAgent(cfg, modelInstance)
+	rootAgent, err := newBrowserAgent(agentCfg, modelInstance)
 	if err != nil {
 		return nil, fmt.Errorf("create agent: %w", err)
 	}
@@ -60,11 +62,22 @@ func NewAICrawler(ctx context.Context, configPath string, out io.Writer, crawler
 		out = io.Discard
 	}
 
+	appCfg := config.Load()
+	mailer := NewSMTPMailer(SMTPMailConfig{
+		Host: appCfg.SMTPHost,
+		Port: appCfg.SMTPPort,
+		User: appCfg.SMTPUser,
+		Pass: appCfg.SMTPPass,
+		From: appCfg.MailFrom,
+		To:   appCfg.MailTo,
+	})
+
 	return &AICrawler{
 		out:               out,
 		crawlerRepository: crawlerRepository,
 		sessionService:    session.InMemoryService(),
 		rootAgent:         rootAgent,
+		mailer:            mailer,
 		now:               time.Now,
 	}, nil
 }
@@ -153,17 +166,14 @@ func (c *AICrawler) Run(ctx context.Context) (err error) {
 	if err != nil {
 		return fmt.Errorf("parse collected postings: %w", err)
 	}
-	if err := c.crawlerRepository.UpsertJobPostings(ctx, postings); err != nil {
-		return fmt.Errorf("upsert job postings: %w", err)
+	newPostings, err := c.findNewPostings(ctx, postings)
+	if err != nil {
+		return err
 	}
-
-	if err := c.crawlerRepository.CreateCrawlRun(ctx, &model.CrawlRun{
-		Source:     appName,
-		StartedAt:  startedAt,
-		FinishedAt: finishedAt,
-	}); err != nil {
-		return fmt.Errorf("create crawl run: %w", err)
+	if err := c.persistCrawlResults(ctx, postings, startedAt, finishedAt); err != nil {
+		return err
 	}
+	c.notifyNewPostings(ctx, finishedAt, newPostings)
 
 	if _, err := fmt.Fprintln(c.out, outputText); err != nil {
 		return fmt.Errorf("write crawl output: %w", err)
@@ -190,7 +200,80 @@ func newModel(ctx context.Context, modelID string) (adkmodel.LLM, error) {
 type crawlRunRepository interface {
 	CreateCrawlRun(ctx context.Context, crawlRun *model.CrawlRun) error
 	GetLatestFinishedAtBySource(ctx context.Context, source string) (*time.Time, error)
+	GetExistingSourceKeys(ctx context.Context, source string, sourceKeys []string) (map[string]struct{}, error)
 	UpsertJobPostings(ctx context.Context, postings []model.JobPosting) error
+}
+
+func (c *AICrawler) findNewPostings(ctx context.Context, postings []model.JobPosting) ([]model.JobPosting, error) {
+	sourceKeys := collectSourceKeys(postings)
+	existingSourceKeys, err := c.crawlerRepository.GetExistingSourceKeys(ctx, appName, sourceKeys)
+	if err != nil {
+		return nil, fmt.Errorf("get existing source keys: %w", err)
+	}
+
+	return filterNewPostings(postings, existingSourceKeys), nil
+}
+
+func (c *AICrawler) persistCrawlResults(ctx context.Context, postings []model.JobPosting, startedAt, finishedAt time.Time) error {
+	if err := c.crawlerRepository.UpsertJobPostings(ctx, postings); err != nil {
+		return fmt.Errorf("upsert job postings: %w", err)
+	}
+	if err := c.crawlerRepository.CreateCrawlRun(ctx, &model.CrawlRun{
+		Source:     appName,
+		StartedAt:  startedAt,
+		FinishedAt: finishedAt,
+	}); err != nil {
+		return fmt.Errorf("create crawl run: %w", err)
+	}
+
+	return nil
+}
+
+func (c *AICrawler) notifyNewPostings(ctx context.Context, finishedAt time.Time, newPostings []model.JobPosting) {
+	if len(newPostings) == 0 || c.mailer == nil {
+		return
+	}
+	if err := c.mailer.SendDigest(ctx, finishedAt, newPostings); err != nil {
+		_, _ = fmt.Fprintf(c.out, "digest email failed: %v\n", err)
+		return
+	}
+
+	_, _ = fmt.Fprintf(c.out, "digest email sent: %d new postings\n", len(newPostings))
+}
+
+func collectSourceKeys(postings []model.JobPosting) []string {
+	seen := make(map[string]struct{}, len(postings))
+	keys := make([]string, 0, len(postings))
+
+	for _, posting := range postings {
+		key := posting.SourceKey
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+
+		seen[key] = struct{}{}
+		keys = append(keys, key)
+	}
+
+	return keys
+}
+
+func filterNewPostings(postings []model.JobPosting, existingSourceKeys map[string]struct{}) []model.JobPosting {
+	if len(postings) == 0 {
+		return nil
+	}
+
+	newPostings := make([]model.JobPosting, 0, len(postings))
+	for _, posting := range postings {
+		if _, exists := existingSourceKeys[posting.SourceKey]; exists {
+			continue
+		}
+		newPostings = append(newPostings, posting)
+	}
+	return newPostings
 }
 
 func (c *AICrawler) buildSessionState(ctx context.Context) (map[string]any, error) {
