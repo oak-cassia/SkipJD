@@ -242,6 +242,7 @@ func (c *AICrawler) notifyNewPostings(ctx context.Context, finishedAt time.Time,
 }
 
 func collectSourceKeys(postings []model.JobPosting) []string {
+	// 값 자체는 필요 없어서 빈 구조체(struct{})를 사용
 	seen := make(map[string]struct{}, len(postings))
 	keys := make([]string, 0, len(postings))
 
@@ -254,6 +255,7 @@ func collectSourceKeys(postings []model.JobPosting) []string {
 			continue
 		}
 
+		// 처음 본 키만 set과 결과 목록에 추가
 		seen[key] = struct{}{}
 		keys = append(keys, key)
 	}
