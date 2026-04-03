@@ -4,9 +4,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"slices"
+	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -59,29 +58,18 @@ type runnableTool interface {
 	Run(ctx tool.Context, args any) (map[string]any, error)
 }
 
-type capturedAgentBrowserCommand struct {
-	executable  string
-	sessionName string
-	timeout     time.Duration
-	args        []string
-}
-
 func TestAgentBrowserToolsetBuildsExpectedCommands(t *testing.T) {
 	tests := []struct {
-		name           string
-		toolName       string
-		input          map[string]any
-		wantArgs       []string
-		wantTimeout    time.Duration
-		wantStdoutText string
+		name     string
+		toolName string
+		input    map[string]any
+		wantArgs []string
 	}{
 		{
-			name:           "open",
-			toolName:       "agent_browser_open",
-			input:          map[string]any{"url": "https://example.com/jobs"},
-			wantArgs:       []string{"open", "https://example.com/jobs"},
-			wantTimeout:    3 * time.Second,
-			wantStdoutText: "ok\n",
+			name:     "open",
+			toolName: "agent_browser_open",
+			input:    map[string]any{"url": "https://example.com/jobs"},
+			wantArgs: []string{"--session", agentBrowserSessionName, "open", "https://example.com/jobs"},
 		},
 		{
 			name:     "snapshot",
@@ -92,105 +80,76 @@ func TestAgentBrowserToolsetBuildsExpectedCommands(t *testing.T) {
 				"depth":       3,
 				"selector":    "#content",
 			},
-			wantArgs:       []string{"snapshot", "--interactive", "--compact", "--depth", "3", "--selector", "#content"},
-			wantTimeout:    3 * time.Second,
-			wantStdoutText: "ok\n",
+			wantArgs: []string{"--session", agentBrowserSessionName, "snapshot", "--interactive", "--compact", "--depth", "3", "--selector", "#content"},
 		},
 		{
-			name:           "click",
-			toolName:       "agent_browser_click",
-			input:          map[string]any{"selector": "@e2"},
-			wantArgs:       []string{"click", "@e2"},
-			wantTimeout:    3 * time.Second,
-			wantStdoutText: "ok\n",
+			name:     "click",
+			toolName: "agent_browser_click",
+			input:    map[string]any{"selector": "@e2"},
+			wantArgs: []string{"--session", agentBrowserSessionName, "click", "@e2"},
 		},
 		{
-			name:           "fill",
-			toolName:       "agent_browser_fill",
-			input:          map[string]any{"selector": "@e3", "text": "서버"},
-			wantArgs:       []string{"fill", "@e3", "서버"},
-			wantTimeout:    3 * time.Second,
-			wantStdoutText: "ok\n",
+			name:     "fill",
+			toolName: "agent_browser_fill",
+			input:    map[string]any{"selector": "@e3", "text": "서버"},
+			wantArgs: []string{"--session", agentBrowserSessionName, "fill", "@e3", "서버"},
 		},
 		{
-			name:           "type",
-			toolName:       "agent_browser_type",
-			input:          map[string]any{"selector": "@e4", "text": "AX"},
-			wantArgs:       []string{"type", "@e4", "AX"},
-			wantTimeout:    3 * time.Second,
-			wantStdoutText: "ok\n",
+			name:     "type",
+			toolName: "agent_browser_type",
+			input:    map[string]any{"selector": "@e4", "text": "AI"},
+			wantArgs: []string{"--session", agentBrowserSessionName, "type", "@e4", "AI"},
 		},
 		{
-			name:           "wait selector",
-			toolName:       "agent_browser_wait",
-			input:          map[string]any{"selector": "@e5"},
-			wantArgs:       []string{"wait", "@e5"},
-			wantTimeout:    3 * time.Second,
-			wantStdoutText: "ok\n",
+			name:     "wait selector",
+			toolName: "agent_browser_wait",
+			input:    map[string]any{"selector": "@e5"},
+			wantArgs: []string{"--session", agentBrowserSessionName, "wait", "@e5"},
 		},
 		{
-			name:           "wait milliseconds",
-			toolName:       "agent_browser_wait",
-			input:          map[string]any{"milliseconds": 4500},
-			wantArgs:       []string{"wait", "4500"},
-			wantTimeout:    9500 * time.Millisecond,
-			wantStdoutText: "ok\n",
+			name:     "wait milliseconds",
+			toolName: "agent_browser_wait",
+			input:    map[string]any{"milliseconds": 4500},
+			wantArgs: []string{"--session", agentBrowserSessionName, "wait", "4500"},
 		},
 		{
-			name:           "get text",
-			toolName:       "agent_browser_get_text",
-			input:          map[string]any{"selector": "@e6"},
-			wantArgs:       []string{"get", "text", "@e6"},
-			wantTimeout:    3 * time.Second,
-			wantStdoutText: "ok\n",
+			name:     "get text",
+			toolName: "agent_browser_get_text",
+			input:    map[string]any{"selector": "@e6"},
+			wantArgs: []string{"--session", agentBrowserSessionName, "get", "text", "@e6"},
 		},
 		{
-			name:           "get url",
-			toolName:       "agent_browser_get_url",
-			input:          map[string]any{},
-			wantArgs:       []string{"get", "url"},
-			wantTimeout:    3 * time.Second,
-			wantStdoutText: "ok\n",
+			name:     "get url",
+			toolName: "agent_browser_get_url",
+			input:    map[string]any{},
+			wantArgs: []string{"--session", agentBrowserSessionName, "get", "url"},
 		},
 		{
-			name:           "close",
-			toolName:       "agent_browser_close",
-			input:          map[string]any{},
-			wantArgs:       []string{"close"},
-			wantTimeout:    3 * time.Second,
-			wantStdoutText: "ok\n",
+			name:     "close",
+			toolName: "agent_browser_close",
+			input:    map[string]any{},
+			wantArgs: []string{"--session", agentBrowserSessionName, "close"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var captured capturedAgentBrowserCommand
-			toolset, err := newAgentBrowserToolsetWithRunner(
-				"/usr/local/bin/agent-browser",
-				"skipjd-test-session",
-				3*time.Second,
-				func(ctx context.Context, executable string, sessionName string, timeout time.Duration, args ...string) agentBrowserCommandResult {
-					_ = ctx
-					captured = capturedAgentBrowserCommand{
-						executable:  executable,
-						sessionName: sessionName,
-						timeout:     timeout,
-						args:        slices.Clone(args),
-					}
-					return agentBrowserCommandResult{Stdout: "ok\n"}
-				},
-			)
+			capturePath := filepath.Join(t.TempDir(), "agent-browser-args.txt")
+			t.Setenv("AGENT_BROWSER_ARGS_FILE", capturePath)
+			installFakeAgentBrowser(t, `
+printf '%s\n' "$@" > "$AGENT_BROWSER_ARGS_FILE"
+printf 'ok\n'
+`)
+
+			toolset, err := newAgentBrowserToolset()
 			require.NoError(t, err)
 
 			commandTool := getRunnableToolByName(t, toolset, tt.toolName)
 			got, err := commandTool.Run(stubToolContext{Context: context.Background()}, tt.input)
 			require.NoError(t, err)
 
-			assert.Equal(t, "/usr/local/bin/agent-browser", captured.executable)
-			assert.Equal(t, "skipjd-test-session", captured.sessionName)
-			assert.Equal(t, tt.wantTimeout, captured.timeout)
-			assert.Equal(t, tt.wantArgs, captured.args)
-			assert.Equal(t, tt.wantStdoutText, got["stdout"])
+			assert.Equal(t, tt.wantArgs, readCapturedArgs(t, capturePath))
+			assert.Equal(t, "ok\n", got["stdout"])
 			assert.Empty(t, got["stderr"])
 			assert.Equal(t, float64(0), got["exit_code"])
 		})
@@ -198,19 +157,9 @@ func TestAgentBrowserToolsetBuildsExpectedCommands(t *testing.T) {
 }
 
 func TestAgentBrowserSnapshotRejectsEmptyOutput(t *testing.T) {
-	toolset, err := newAgentBrowserToolsetWithRunner(
-		"agent-browser",
-		"skipjd-test-session",
-		3*time.Second,
-		func(ctx context.Context, executable string, sessionName string, timeout time.Duration, args ...string) agentBrowserCommandResult {
-			_ = ctx
-			_ = executable
-			_ = sessionName
-			_ = timeout
-			_ = args
-			return agentBrowserCommandResult{}
-		},
-	)
+	installFakeAgentBrowser(t, ":")
+
+	toolset, err := newAgentBrowserToolset()
 	require.NoError(t, err)
 
 	commandTool := getRunnableToolByName(t, toolset, "agent_browser_snapshot")
@@ -222,30 +171,22 @@ func TestAgentBrowserSnapshotRejectsEmptyOutput(t *testing.T) {
 }
 
 func TestRunAgentBrowserCommandReportsMissingCLI(t *testing.T) {
-	result := runAgentBrowserCommand(
-		context.Background(),
-		filepath.Join(t.TempDir(), "missing-agent-browser"),
-		"skipjd-test-session",
-		time.Second,
-		"snapshot",
-	)
+	t.Setenv("PATH", t.TempDir())
+
+	result := runAgentBrowserCommand(context.Background(), agentBrowserDefaultTimeout, "snapshot")
 
 	assert.Equal(t, -1, result.ExitCode)
-	assert.Contains(t, result.Error, "no such file")
+	assert.Contains(t, result.Error, "executable file not found")
 }
 
 func TestRunAgentBrowserCommandReportsNonZeroExit(t *testing.T) {
-	scriptPath := filepath.Join(t.TempDir(), "fake-agent-browser")
-	err := os.WriteFile(scriptPath, []byte("#!/bin/sh\necho stdout-line\necho stderr-line >&2\nexit 7\n"), 0o755)
-	require.NoError(t, err)
+	installFakeAgentBrowser(t, `
+printf 'stdout-line\n'
+printf 'stderr-line\n' >&2
+exit 7
+`)
 
-	result := runAgentBrowserCommand(
-		context.Background(),
-		scriptPath,
-		"skipjd-test-session",
-		time.Second,
-		"snapshot",
-	)
+	result := runAgentBrowserCommand(context.Background(), agentBrowserDefaultTimeout, "snapshot")
 
 	assert.Equal(t, 7, result.ExitCode)
 	assert.Equal(t, "stdout-line\n", result.Stdout)
@@ -254,36 +195,18 @@ func TestRunAgentBrowserCommandReportsNonZeroExit(t *testing.T) {
 }
 
 func TestRunAgentBrowserCommandReportsTimeout(t *testing.T) {
-	scriptPath := filepath.Join(t.TempDir(), "slow-agent-browser")
-	err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nsleep 2\n"), 0o755)
-	require.NoError(t, err)
+	installFakeAgentBrowser(t, "/bin/sleep 2")
 
-	result := runAgentBrowserCommand(
-		context.Background(),
-		scriptPath,
-		"skipjd-test-session",
-		50*time.Millisecond,
-		"snapshot",
-	)
+	result := runAgentBrowserCommand(context.Background(), 50, "snapshot")
 
 	assert.Equal(t, -1, result.ExitCode)
-	assert.Equal(t, "agent-browser command timed out after 50ms", result.Error)
+	assert.Equal(t, "agent-browser command timed out after 50ns", result.Error)
 }
 
 func TestAgentBrowserWaitRejectsAmbiguousInput(t *testing.T) {
-	toolset, err := newAgentBrowserToolsetWithRunner(
-		"agent-browser",
-		"skipjd-test-session",
-		3*time.Second,
-		func(ctx context.Context, executable string, sessionName string, timeout time.Duration, args ...string) agentBrowserCommandResult {
-			_ = ctx
-			_ = executable
-			_ = sessionName
-			_ = timeout
-			_ = args
-			return agentBrowserCommandResult{Stdout: "unexpected"}
-		},
-	)
+	installFakeAgentBrowser(t, "printf 'unexpected'")
+
+	toolset, err := newAgentBrowserToolset()
 	require.NoError(t, err)
 
 	commandTool := getRunnableToolByName(t, toolset, "agent_browser_wait")
@@ -296,6 +219,26 @@ func TestAgentBrowserWaitRejectsAmbiguousInput(t *testing.T) {
 	assert.Equal(t, "provide either selector or milliseconds, not both", got["error"])
 	assert.Equal(t, float64(-1), got["exit_code"])
 	assert.Empty(t, got["stdout"])
+}
+
+func installFakeAgentBrowser(t *testing.T, body string) {
+	t.Helper()
+
+	commandDir := t.TempDir()
+	commandPath := filepath.Join(commandDir, agentBrowserExecutable)
+	script := "#!/bin/sh\n" + strings.TrimLeft(body, "\n") + "\n"
+	err := os.WriteFile(commandPath, []byte(script), 0o755)
+	require.NoError(t, err)
+	t.Setenv("PATH", commandDir)
+}
+
+func readCapturedArgs(t *testing.T, capturePath string) []string {
+	t.Helper()
+
+	data, err := os.ReadFile(capturePath)
+	require.NoError(t, err)
+
+	return strings.Split(strings.TrimRight(string(data), "\n"), "\n")
 }
 
 func getRunnableToolByName(t *testing.T, toolset tool.Toolset, toolName string) runnableTool {

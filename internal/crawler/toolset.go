@@ -27,20 +27,8 @@ type agentBrowserCommandResult struct {
 	Error    string `json:"error,omitempty"`
 }
 
-type agentBrowserCommandRunner func(
-	ctx context.Context,
-	executable string,
-	sessionName string,
-	timeout time.Duration,
-	args ...string,
-) agentBrowserCommandResult
-
 type agentBrowserToolset struct {
-	executable  string
-	sessionName string
-	timeout     time.Duration
-	runCommand  agentBrowserCommandRunner
-	tools       []tool.Tool
+	tools []tool.Tool
 }
 
 type agentBrowserOpenArgs struct {
@@ -71,43 +59,7 @@ type agentBrowserWaitArgs struct {
 type agentBrowserNoArgs struct{}
 
 func newAgentBrowserToolset() (tool.Toolset, error) {
-	return newAgentBrowserToolsetWithRunner(
-		agentBrowserExecutable,
-		agentBrowserSessionName,
-		agentBrowserDefaultTimeout,
-		runAgentBrowserCommand,
-	)
-}
-
-func newAgentBrowserToolsetWithRunner(
-	executable string,
-	sessionName string,
-	timeout time.Duration,
-	runner agentBrowserCommandRunner,
-) (*agentBrowserToolset, error) {
-	executable = strings.TrimSpace(executable)
-	if executable == "" {
-		return nil, fmt.Errorf("agent-browser executable is required")
-	}
-
-	sessionName = strings.TrimSpace(sessionName)
-	if sessionName == "" {
-		return nil, fmt.Errorf("agent-browser session name is required")
-	}
-
-	if timeout <= 0 {
-		timeout = agentBrowserDefaultTimeout
-	}
-	if runner == nil {
-		runner = runAgentBrowserCommand
-	}
-
-	toolset := &agentBrowserToolset{
-		executable:  executable,
-		sessionName: sessionName,
-		timeout:     timeout,
-		runCommand:  runner,
-	}
+	toolset := &agentBrowserToolset{}
 
 	var err error
 	toolset.tools, err = toolset.buildTools()
@@ -123,20 +75,16 @@ func (t *agentBrowserToolset) Name() string {
 }
 
 func (t *agentBrowserToolset) Tools(agent.ReadonlyContext) ([]tool.Tool, error) {
-	tools := make([]tool.Tool, len(t.tools))
-	copy(tools, t.tools)
-	return tools, nil
+	return t.tools, nil
 }
 
 func (t *agentBrowserToolset) buildTools() ([]tool.Tool, error) {
 	toolDefs := []struct {
-		name        string
-		description string
-		build       func() (tool.Tool, error)
+		name  string
+		build func() (tool.Tool, error)
 	}{
 		{
-			name:        "agent_browser_open",
-			description: "Navigate the browser session to a URL.",
+			name: "agent_browser_open",
 			build: func() (tool.Tool, error) {
 				return functiontool.New(functiontool.Config{
 					Name:        "agent_browser_open",
@@ -145,8 +93,7 @@ func (t *agentBrowserToolset) buildTools() ([]tool.Tool, error) {
 			},
 		},
 		{
-			name:        "agent_browser_snapshot",
-			description: "Return the accessibility snapshot with @refs for interactive elements.",
+			name: "agent_browser_snapshot",
 			build: func() (tool.Tool, error) {
 				return functiontool.New(functiontool.Config{
 					Name:        "agent_browser_snapshot",
@@ -155,8 +102,7 @@ func (t *agentBrowserToolset) buildTools() ([]tool.Tool, error) {
 			},
 		},
 		{
-			name:        "agent_browser_click",
-			description: "Click an element by CSS selector or @ref from the latest snapshot.",
+			name: "agent_browser_click",
 			build: func() (tool.Tool, error) {
 				return functiontool.New(functiontool.Config{
 					Name:        "agent_browser_click",
@@ -165,8 +111,7 @@ func (t *agentBrowserToolset) buildTools() ([]tool.Tool, error) {
 			},
 		},
 		{
-			name:        "agent_browser_fill",
-			description: "Clear an input and fill it by CSS selector or @ref.",
+			name: "agent_browser_fill",
 			build: func() (tool.Tool, error) {
 				return functiontool.New(functiontool.Config{
 					Name:        "agent_browser_fill",
@@ -175,8 +120,7 @@ func (t *agentBrowserToolset) buildTools() ([]tool.Tool, error) {
 			},
 		},
 		{
-			name:        "agent_browser_type",
-			description: "Type text into an input by CSS selector or @ref.",
+			name: "agent_browser_type",
 			build: func() (tool.Tool, error) {
 				return functiontool.New(functiontool.Config{
 					Name:        "agent_browser_type",
@@ -185,8 +129,7 @@ func (t *agentBrowserToolset) buildTools() ([]tool.Tool, error) {
 			},
 		},
 		{
-			name:        "agent_browser_wait",
-			description: "Wait for a selector/@ref or a duration in milliseconds.",
+			name: "agent_browser_wait",
 			build: func() (tool.Tool, error) {
 				return functiontool.New(functiontool.Config{
 					Name:        "agent_browser_wait",
@@ -195,8 +138,7 @@ func (t *agentBrowserToolset) buildTools() ([]tool.Tool, error) {
 			},
 		},
 		{
-			name:        "agent_browser_get_text",
-			description: "Read text content from an element by CSS selector or @ref.",
+			name: "agent_browser_get_text",
 			build: func() (tool.Tool, error) {
 				return functiontool.New(functiontool.Config{
 					Name:        "agent_browser_get_text",
@@ -205,8 +147,7 @@ func (t *agentBrowserToolset) buildTools() ([]tool.Tool, error) {
 			},
 		},
 		{
-			name:        "agent_browser_get_url",
-			description: "Read the current page URL.",
+			name: "agent_browser_get_url",
 			build: func() (tool.Tool, error) {
 				return functiontool.New(functiontool.Config{
 					Name:        "agent_browser_get_url",
@@ -215,8 +156,7 @@ func (t *agentBrowserToolset) buildTools() ([]tool.Tool, error) {
 			},
 		},
 		{
-			name:        "agent_browser_close",
-			description: "Close the current browser session.",
+			name: "agent_browser_close",
 			build: func() (tool.Tool, error) {
 				return functiontool.New(functiontool.Config{
 					Name:        "agent_browser_close",
@@ -244,7 +184,7 @@ func (t *agentBrowserToolset) open(ctx tool.Context, input agentBrowserOpenArgs)
 		return newAgentBrowserInputError("url is required"), nil
 	}
 
-	return t.run(ctx, t.timeout, "open", targetURL), nil
+	return runAgentBrowserCommand(ctx, agentBrowserDefaultTimeout, "open", targetURL), nil
 }
 
 func (t *agentBrowserToolset) snapshot(ctx tool.Context, input agentBrowserSnapshotArgs) (agentBrowserCommandResult, error) {
@@ -267,7 +207,7 @@ func (t *agentBrowserToolset) snapshot(ctx tool.Context, input agentBrowserSnaps
 		args = append(args, "--selector", selector)
 	}
 
-	result := t.run(ctx, t.timeout, args...)
+	result := runAgentBrowserCommand(ctx, agentBrowserDefaultTimeout, args...)
 	if result.Error == "" && result.ExitCode == 0 && strings.TrimSpace(result.Stdout) == "" {
 		result.Error = "agent-browser snapshot returned empty output"
 	}
@@ -281,7 +221,7 @@ func (t *agentBrowserToolset) click(ctx tool.Context, input agentBrowserSelector
 		return newAgentBrowserInputError("selector is required"), nil
 	}
 
-	return t.run(ctx, t.timeout, "click", selector), nil
+	return runAgentBrowserCommand(ctx, agentBrowserDefaultTimeout, "click", selector), nil
 }
 
 func (t *agentBrowserToolset) fill(ctx tool.Context, input agentBrowserTextInputArgs) (agentBrowserCommandResult, error) {
@@ -290,7 +230,7 @@ func (t *agentBrowserToolset) fill(ctx tool.Context, input agentBrowserTextInput
 		return newAgentBrowserInputError("selector is required"), nil
 	}
 
-	return t.run(ctx, t.timeout, "fill", selector, input.Text), nil
+	return runAgentBrowserCommand(ctx, agentBrowserDefaultTimeout, "fill", selector, input.Text), nil
 }
 
 func (t *agentBrowserToolset) typeText(ctx tool.Context, input agentBrowserTextInputArgs) (agentBrowserCommandResult, error) {
@@ -299,7 +239,7 @@ func (t *agentBrowserToolset) typeText(ctx tool.Context, input agentBrowserTextI
 		return newAgentBrowserInputError("selector is required"), nil
 	}
 
-	return t.run(ctx, t.timeout, "type", selector, input.Text), nil
+	return runAgentBrowserCommand(ctx, agentBrowserDefaultTimeout, "type", selector, input.Text), nil
 }
 
 func (t *agentBrowserToolset) wait(ctx tool.Context, input agentBrowserWaitArgs) (agentBrowserCommandResult, error) {
@@ -319,14 +259,14 @@ func (t *agentBrowserToolset) wait(ctx tool.Context, input agentBrowserWaitArgs)
 	case selector == "" && milliseconds <= 0:
 		return newAgentBrowserInputError("either selector or milliseconds is required"), nil
 	case selector != "":
-		return t.run(ctx, t.timeout, "wait", selector), nil
+		return runAgentBrowserCommand(ctx, agentBrowserDefaultTimeout, "wait", selector), nil
 	default:
-		waitTimeout := t.timeout
+		waitTimeout := agentBrowserDefaultTimeout
 		requestedWait := time.Duration(milliseconds) * time.Millisecond
 		if timeoutWithMargin := requestedWait + agentBrowserWaitTimeoutMargin; timeoutWithMargin > waitTimeout {
 			waitTimeout = timeoutWithMargin
 		}
-		return t.run(ctx, waitTimeout, "wait", strconv.Itoa(milliseconds)), nil
+		return runAgentBrowserCommand(ctx, waitTimeout, "wait", strconv.Itoa(milliseconds)), nil
 	}
 }
 
@@ -336,19 +276,15 @@ func (t *agentBrowserToolset) getText(ctx tool.Context, input agentBrowserSelect
 		return newAgentBrowserInputError("selector is required"), nil
 	}
 
-	return t.run(ctx, t.timeout, "get", "text", selector), nil
+	return runAgentBrowserCommand(ctx, agentBrowserDefaultTimeout, "get", "text", selector), nil
 }
 
 func (t *agentBrowserToolset) getURL(ctx tool.Context, _ agentBrowserNoArgs) (agentBrowserCommandResult, error) {
-	return t.run(ctx, t.timeout, "get", "url"), nil
+	return runAgentBrowserCommand(ctx, agentBrowserDefaultTimeout, "get", "url"), nil
 }
 
 func (t *agentBrowserToolset) close(ctx tool.Context, _ agentBrowserNoArgs) (agentBrowserCommandResult, error) {
-	return t.run(ctx, t.timeout, "close"), nil
-}
-
-func (t *agentBrowserToolset) run(ctx context.Context, timeout time.Duration, args ...string) agentBrowserCommandResult {
-	return t.runCommand(ctx, t.executable, t.sessionName, timeout, args...)
+	return runAgentBrowserCommand(ctx, agentBrowserDefaultTimeout, "close"), nil
 }
 
 func newAgentBrowserInputError(message string) agentBrowserCommandResult {
@@ -361,8 +297,6 @@ func newAgentBrowserInputError(message string) agentBrowserCommandResult {
 func closeAgentBrowserSession(ctx context.Context) agentBrowserCommandResult {
 	return runAgentBrowserCommand(
 		ctx,
-		agentBrowserExecutable,
-		agentBrowserSessionName,
 		agentBrowserDefaultTimeout,
 		"close",
 	)
@@ -370,8 +304,6 @@ func closeAgentBrowserSession(ctx context.Context) agentBrowserCommandResult {
 
 func runAgentBrowserCommand(
 	ctx context.Context,
-	executable string,
-	sessionName string,
 	timeout time.Duration,
 	args ...string,
 ) agentBrowserCommandResult {
@@ -382,8 +314,8 @@ func runAgentBrowserCommand(
 	commandCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	commandArgs := append([]string{"--session", sessionName}, args...)
-	command := exec.CommandContext(commandCtx, executable, commandArgs...)
+	commandArgs := append([]string{"--session", agentBrowserSessionName}, args...)
+	command := exec.CommandContext(commandCtx, agentBrowserExecutable, commandArgs...)
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -403,7 +335,8 @@ func runAgentBrowserCommand(
 	}
 
 	result.ExitCode = -1
-	if exitError, ok := errors.AsType[*exec.ExitError](err); ok {
+	var exitError *exec.ExitError
+	if errors.As(err, &exitError) {
 		result.ExitCode = exitError.ExitCode()
 	}
 
