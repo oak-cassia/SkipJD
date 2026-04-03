@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"google.golang.org/adk/agent"
@@ -79,6 +80,8 @@ func NewAICrawler(ctx context.Context, configPath string, out io.Writer, crawler
 }
 
 func (c *AICrawler) Run(ctx context.Context) (err error) {
+	defer c.closeBrowserSession()
+
 	startedAt := c.now().Local()
 
 	state, err := c.buildSessionState(ctx)
@@ -176,6 +179,28 @@ func (c *AICrawler) Run(ctx context.Context) (err error) {
 	}
 
 	return nil
+}
+
+func (c *AICrawler) closeBrowserSession() {
+	closeCtx, cancel := context.WithTimeout(context.Background(), agentBrowserDefaultTimeout)
+	defer cancel()
+
+	result := closeAgentBrowserSession(closeCtx)
+	if result.ExitCode == 0 && result.Error == "" {
+		return
+	}
+
+	out := c.out
+	if out == nil {
+		out = io.Discard
+	}
+	_, _ = fmt.Fprintf(
+		out,
+		"agent-browser close failed: exit_code=%d error=%s stderr=%s\n",
+		result.ExitCode,
+		strings.TrimSpace(result.Error),
+		strings.TrimSpace(result.Stderr),
+	)
 }
 
 func Run(ctx context.Context, configPath string, crawlerRepository *repository.CrawlerRepository) error {

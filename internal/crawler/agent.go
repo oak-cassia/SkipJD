@@ -9,7 +9,7 @@ import (
 )
 
 func newBrowserAgent(cfg AgentConfig, modelInstance model.LLM) (agent.Agent, error) {
-	playwrightToolset, err := newPlaywrightToolset()
+	agentBrowserToolset, err := newAgentBrowserToolset()
 	if err != nil {
 		return nil, err
 	}
@@ -20,7 +20,7 @@ func newBrowserAgent(cfg AgentConfig, modelInstance model.LLM) (agent.Agent, err
 		Description: cfg.Description,
 		Instruction: cfg.Instruction,
 		OutputKey:   collectedPostingsKey,
-		Toolsets:    []tool.Toolset{playwrightToolset},
+		Toolsets:    []tool.Toolset{agentBrowserToolset},
 		InputSchema: &genai.Schema{
 			Type: "object",
 			Properties: map[string]*genai.Schema{
