@@ -6,6 +6,10 @@ import (
 	"time"
 )
 
+const sessionDateFormat = "2006-01-02"
+
+var seoulLocation = time.FixedZone("Asia/Seoul", 9*60*60)
+
 func (c *AICrawler) buildSessionState(ctx context.Context) (map[string]any, error) {
 	lastUpdated, err := c.resolveLastUpdated(ctx)
 	if err != nil {
@@ -16,7 +20,7 @@ func (c *AICrawler) buildSessionState(ctx context.Context) (map[string]any, erro
 		"preferred_companies": []string{
 			"크래프톤",
 		},
-		"last_updated": lastUpdated.Format(time.RFC3339),
+		"last_updated": lastUpdated.In(seoulLocation).Format(sessionDateFormat),
 	}, nil
 }
 

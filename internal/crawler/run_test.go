@@ -32,9 +32,26 @@ func TestBuildSessionStateUsesLatestFinishedAt(t *testing.T) {
 
 	assert.Equal(t, map[string]any{
 		"preferred_companies": []string{"크래프톤"},
-		"last_updated":        "2026-03-20T10:30:00Z",
+		"last_updated":        "2026-03-20",
 	}, state)
 	assert.Equal(t, appName, repo.lastSource)
+}
+
+func TestBuildSessionStateConvertsLatestFinishedAtToKSTDate(t *testing.T) {
+	repo := &stubCrawlRunRepository{
+		latestFinishedAt: timePtr(time.Date(2026, 3, 20, 23, 30, 0, 0, time.UTC)),
+	}
+	crawler := &AICrawler{
+		crawlerRepository: repo,
+		now: func() time.Time {
+			return time.Date(2026, 3, 25, 8, 0, 0, 0, time.UTC)
+		},
+	}
+
+	state, err := crawler.buildSessionState(context.Background())
+	require.NoError(t, err)
+
+	assert.Equal(t, "2026-03-21", state["last_updated"])
 }
 
 func TestBuildSessionStateFallsBackToTwoWeeksBeforeNow(t *testing.T) {
@@ -49,7 +66,7 @@ func TestBuildSessionStateFallsBackToTwoWeeksBeforeNow(t *testing.T) {
 	state, err := crawler.buildSessionState(context.Background())
 	require.NoError(t, err)
 
-	assert.Equal(t, "2026-03-11T08:00:00+09:00", state["last_updated"])
+	assert.Equal(t, "2026-03-11", state["last_updated"])
 }
 
 func TestCrawlerConfigInstructionIncludesLastUpdatedConstraint(t *testing.T) {
@@ -65,7 +82,8 @@ func TestCrawlerConfigInstructionIncludesLastUpdatedConstraint(t *testing.T) {
 	assert.Contains(t, content, "https://www.gamejob.co.kr/Recruit/joblist?menucode=duty&duty=3")
 	assert.Contains(t, content, "https://www.gamejob.co.kr/Recruit/joblist?menucode=duty&duty=16")
 	assert.Contains(t, content, "수정일순")
-	assert.Contains(t, content, "collect only postings whose listing modified date is later than {last_updated}")
+	assert.Contains(t, content, "collect postings whose listing modified date is on or after {last_updated}")
+	assert.Contains(t, content, "listing modified date is earlier than {last_updated}")
 	assert.Contains(t, content, "stop scanning that page and move to the next listing page")
 }
 

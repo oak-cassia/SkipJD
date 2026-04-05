@@ -30,7 +30,7 @@ func newBrowserAgent(cfg AgentConfig, modelInstance model.LLM) (agent.Agent, err
 				},
 				"last_updated": {
 					Type:   "string",
-					Format: "date-time",
+					Format: "date",
 				},
 			},
 			Required: []string{"preferred_companies", "last_updated"},
