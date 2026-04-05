@@ -13,12 +13,8 @@ func (c *AICrawler) buildSessionState(ctx context.Context) (map[string]any, erro
 	}
 
 	return map[string]any{
-		"target_site": defaultTargetSite,
 		"preferred_companies": []string{
 			"크래프톤",
-		},
-		"preferred_positions": []string{
-			"게임 서버", "AI",
 		},
 		"last_updated": lastUpdated.Format(time.RFC3339),
 	}, nil

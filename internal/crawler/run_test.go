@@ -30,10 +30,10 @@ func TestBuildSessionStateUsesLatestFinishedAt(t *testing.T) {
 	state, err := crawler.buildSessionState(context.Background())
 	require.NoError(t, err)
 
-	assert.Equal(t, defaultTargetSite, state["target_site"])
-	assert.Equal(t, []string{"크래프톤"}, state["preferred_companies"])
-	assert.Equal(t, []string{"게임 서버", "AX"}, state["preferred_positions"])
-	assert.Equal(t, "2026-03-20T10:30:00Z", state["last_updated"])
+	assert.Equal(t, map[string]any{
+		"preferred_companies": []string{"크래프톤"},
+		"last_updated":        "2026-03-20T10:30:00Z",
+	}, state)
 	assert.Equal(t, appName, repo.lastSource)
 }
 
@@ -60,9 +60,13 @@ func TestCrawlerConfigInstructionIncludesLastUpdatedConstraint(t *testing.T) {
 
 	content := string(data)
 	assert.Contains(t, content, "{last_updated}")
-	assert.Contains(t, content, "{target_site}")
 	assert.Contains(t, content, "{preferred_companies}")
-	assert.Contains(t, content, "{preferred_positions}")
+	assert.Contains(t, content, "https://www.gamejob.co.kr/Recruit/joblist?menucode=duty&duty=1")
+	assert.Contains(t, content, "https://www.gamejob.co.kr/Recruit/joblist?menucode=duty&duty=3")
+	assert.Contains(t, content, "https://www.gamejob.co.kr/Recruit/joblist?menucode=duty&duty=16")
+	assert.Contains(t, content, "수정일순")
+	assert.Contains(t, content, "collect only postings whose listing modified date is later than {last_updated}")
+	assert.Contains(t, content, "stop scanning that page and move to the next listing page")
 }
 
 type stubCrawlRunRepository struct {
