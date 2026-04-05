@@ -19,7 +19,7 @@ func main() {
 	_ = godotenv.Load()
 
 	ctx := context.Background()
-	cfg := config.Load()
+	cfg := config.LoadDatabaseConfig()
 
 	db, err := database.NewGormDB(cfg)
 	if err != nil {

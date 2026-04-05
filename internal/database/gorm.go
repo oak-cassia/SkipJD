@@ -9,7 +9,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func NewGormDB(cfg config.Config) (*gorm.DB, error) {
+func NewGormDB(cfg config.DatabaseConfig) (*gorm.DB, error) {
 	tlsMode := "false"
 	if cfg.RequireDBTLS {
 		tlsMode = "true"

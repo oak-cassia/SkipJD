@@ -15,7 +15,6 @@ import (
 	"google.golang.org/adk/session"
 	"google.golang.org/genai"
 
-	"skipjd/internal/config"
 	"skipjd/internal/repository"
 )
 
@@ -30,7 +29,6 @@ type AICrawler struct {
 	crawlerRepository crawlRunRepository
 	sessionService    session.Service
 	rootAgent         agent.Agent
-	mailer            Mailer
 	now               func() time.Time
 }
 
@@ -58,22 +56,11 @@ func NewAICrawler(ctx context.Context, configPath string, out io.Writer, crawler
 		out = io.Discard
 	}
 
-	appCfg := config.Load()
-	mailer := NewSMTPMailer(SMTPMailConfig{
-		Host: appCfg.SMTPHost,
-		Port: appCfg.SMTPPort,
-		User: appCfg.SMTPUser,
-		Pass: appCfg.SMTPPass,
-		From: appCfg.MailFrom,
-		To:   appCfg.MailTo,
-	})
-
 	return &AICrawler{
 		out:               out,
 		crawlerRepository: crawlerRepository,
 		sessionService:    session.InMemoryService(),
 		rootAgent:         rootAgent,
-		mailer:            mailer,
 		now:               time.Now,
 	}, nil
 }
@@ -164,14 +151,9 @@ func (c *AICrawler) Run(ctx context.Context) (err error) {
 	if err != nil {
 		return fmt.Errorf("parse collected postings: %w", err)
 	}
-	newPostings, err := c.findNewPostings(ctx, postings)
-	if err != nil {
-		return err
-	}
 	if err := c.persistCrawlResults(ctx, postings, startedAt, finishedAt); err != nil {
 		return err
 	}
-	c.notifyNewPostings(ctx, finishedAt, newPostings)
 
 	if _, err := fmt.Fprintln(c.out, outputText); err != nil {
 		return fmt.Errorf("write crawl output: %w", err)

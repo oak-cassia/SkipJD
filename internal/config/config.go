@@ -8,37 +8,45 @@ import (
 	"strings"
 )
 
-type Config struct {
+type SMTPConfig struct {
+	SMTPHost string
+	SMTPPort int
+	SMTPUser string
+	SMTPPass string
+	MailFrom string
+	MailTo   string
+}
+
+type DatabaseConfig struct {
 	DBUser       string
 	DBPass       string
 	DBHost       string
 	DBPort       string
 	DBName       string
 	RequireDBTLS bool
-	SMTPHost     string
-	SMTPPort     int
-	SMTPUser     string
-	SMTPPass     string
-	MailFrom     string
-	MailTo       string
 }
 
 const requiredSMTPPort = 587
 
-func Load() Config {
-	return Config{
+func LoadDatabaseConfig() DatabaseConfig {
+	return DatabaseConfig{
 		DBUser:       getEnv("DB_USER"),
 		DBPass:       getEnv("DB_PASS"),
 		DBHost:       getEnv("DB_HOST"),
 		DBPort:       getEnv("DB_PORT"),
 		DBName:       getEnv("DB_NAME"),
 		RequireDBTLS: getParseEnvOrDefault("REQUIRE_DB_TLS", false, strconv.ParseBool),
-		SMTPHost:     getEnv("SMTP_HOST"),
-		SMTPPort:     getSMTPPort(),
-		SMTPUser:     getEnv("SMTP_USER"),
-		SMTPPass:     getEnv("SMTP_PASS"),
-		MailFrom:     getSingleAddressEnv("MAIL_FROM"),
-		MailTo:       getSingleAddressEnv("MAIL_TO"),
+	}
+}
+
+func LoadSMTPConfig() SMTPConfig {
+	return SMTPConfig{
+		SMTPHost: getEnv("SMTP_HOST"),
+		SMTPPort: getSMTPPort(),
+		SMTPUser: getEnv("SMTP_USER"),
+		SMTPPass: getEnv("SMTP_PASS"),
+		MailFrom: getSingleAddressEnv("MAIL_FROM"),
+		MailTo:   getSingleAddressEnv("MAIL_TO"),
 	}
 }
 

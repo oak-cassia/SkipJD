@@ -1,12 +1,9 @@
 package crawler
 
 import (
-	"bytes"
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -88,11 +85,10 @@ func TestCrawlerConfigInstructionIncludesLastUpdatedConstraint(t *testing.T) {
 }
 
 type stubCrawlRunRepository struct {
-	latestFinishedAt   *time.Time
-	lastSource         string
-	upsertedPostings   []model.JobPosting
-	createdCrawlRun    *model.CrawlRun
-	existingSourceKeys map[string]struct{}
+	latestFinishedAt *time.Time
+	lastSource       string
+	upsertedPostings []model.JobPosting
+	createdCrawlRun  *model.CrawlRun
 }
 
 func (r *stubCrawlRunRepository) CreateCrawlRun(ctx context.Context, crawlRun *model.CrawlRun) error {
@@ -108,39 +104,10 @@ func (r *stubCrawlRunRepository) GetLatestFinishedAtBySource(ctx context.Context
 	return r.latestFinishedAt, nil
 }
 
-func (r *stubCrawlRunRepository) GetExistingSourceKeys(ctx context.Context, source string, sourceKeys []string) (map[string]struct{}, error) {
-	_ = ctx
-	r.lastSource = source
-
-	result := make(map[string]struct{})
-	for _, sourceKey := range sourceKeys {
-		if _, exists := r.existingSourceKeys[sourceKey]; !exists {
-			continue
-		}
-		result[sourceKey] = struct{}{}
-	}
-	return result, nil
-}
-
 func (r *stubCrawlRunRepository) UpsertJobPostings(ctx context.Context, postings []model.JobPosting) error {
 	_ = ctx
 	r.upsertedPostings = append([]model.JobPosting(nil), postings...)
 	return nil
-}
-
-type stubMailer struct {
-	sendCalls int
-	sendErr   error
-	lastRunAt time.Time
-	postings  []model.JobPosting
-}
-
-func (m *stubMailer) SendDigest(ctx context.Context, runAt time.Time, postings []model.JobPosting) error {
-	_ = ctx
-	m.sendCalls++
-	m.lastRunAt = runAt
-	m.postings = append([]model.JobPosting(nil), postings...)
-	return m.sendErr
 }
 
 func TestParseCollectedPostingsBuildsJobPostingModels(t *testing.T) {
@@ -172,61 +139,7 @@ func TestParseCollectedPostingsRejectsMissingRequiredFields(t *testing.T) {
 	assert.Contains(t, err.Error(), "title is required")
 }
 
-func TestFilterNewPostingsByExistingSourceKeys(t *testing.T) {
-	postings := []model.JobPosting{
-		{SourceKey: "jobs/example/1", Title: "A"},
-		{SourceKey: "jobs/example/2", Title: "B"},
-		{SourceKey: "jobs/example/3", Title: "C"},
-	}
-
-	newPostings := filterNewPostings(postings, map[string]struct{}{
-		"jobs/example/2": {},
-	})
-
-	require.Len(t, newPostings, 2)
-	assert.Equal(t, "jobs/example/1", newPostings[0].SourceKey)
-	assert.Equal(t, "jobs/example/3", newPostings[1].SourceKey)
-}
-
-func TestPersistenceFlowSkipsDigestWhenNoNewPostings(t *testing.T) {
-	now := time.Date(2026, 3, 31, 9, 0, 0, 0, time.UTC)
-	postings := []model.JobPosting{
-		{
-			Source:      appName,
-			SourceKey:   "jobs/example/1",
-			Title:       "A",
-			Company:     "Krafton",
-			ClosingDate: "채용 시 마감",
-			URL:         "https://jobs.example.com/1",
-		},
-	}
-	repo := &stubCrawlRunRepository{
-		existingSourceKeys: map[string]struct{}{
-			"jobs/example/1": {},
-		},
-	}
-	mailer := &stubMailer{}
-	crawler := &AICrawler{
-		out:               &bytes.Buffer{},
-		crawlerRepository: repo,
-		mailer:            mailer,
-	}
-
-	ctx := context.Background()
-	newPostings, err := crawler.findNewPostings(ctx, postings)
-	require.NoError(t, err)
-	require.Len(t, newPostings, 0)
-
-	err = crawler.persistCrawlResults(ctx, postings, now.Add(-5*time.Minute), now)
-	require.NoError(t, err)
-	crawler.notifyNewPostings(ctx, now, newPostings)
-
-	assert.Equal(t, 0, mailer.sendCalls)
-	require.Len(t, repo.upsertedPostings, 1)
-	require.NotNil(t, repo.createdCrawlRun)
-}
-
-func TestNotifyNewPostingsLogsMailError(t *testing.T) {
+func TestPersistCrawlResultsStoresPostingsAndCreatesRun(t *testing.T) {
 	now := time.Date(2026, 3, 31, 9, 0, 0, 0, time.UTC)
 	postings := []model.JobPosting{
 		{
@@ -239,29 +152,16 @@ func TestNotifyNewPostingsLogsMailError(t *testing.T) {
 		},
 	}
 	repo := &stubCrawlRunRepository{}
-	mailer := &stubMailer{
-		sendErr: errors.New("smtp down"),
-	}
-	output := &bytes.Buffer{}
 	crawler := &AICrawler{
-		out:               output,
 		crawlerRepository: repo,
-		mailer:            mailer,
 	}
 
-	ctx := context.Background()
-	newPostings, err := crawler.findNewPostings(ctx, postings)
+	err := crawler.persistCrawlResults(context.Background(), postings, now.Add(-5*time.Minute), now)
 	require.NoError(t, err)
-	require.Len(t, newPostings, 1)
 
-	err = crawler.persistCrawlResults(ctx, postings, now.Add(-5*time.Minute), now)
-	require.NoError(t, err)
-	crawler.notifyNewPostings(ctx, now, newPostings)
-
-	assert.Equal(t, 1, mailer.sendCalls)
 	require.Len(t, repo.upsertedPostings, 1)
 	require.NotNil(t, repo.createdCrawlRun)
-	assert.True(t, strings.Contains(output.String(), "digest email failed"))
+	assert.Equal(t, postings, repo.upsertedPostings)
 }
 
 func timePtr(t time.Time) *time.Time {

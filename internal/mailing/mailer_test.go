@@ -1,4 +1,4 @@
-package crawler
+package mailing
 
 import (
 	"context"
@@ -29,7 +29,7 @@ func TestBuildDigestBodyIncludesAllFields(t *testing.T) {
 }
 
 func TestSMTPMailerSendDigestBuildsExpectedMessage(t *testing.T) {
-	mailer := NewSMTPMailer(SMTPMailConfig{
+	mailer := NewSMTPMailer(SMTPConfig{
 		Host: "smtp.example.com",
 		Port: 587,
 		User: "smtp-user",
@@ -38,9 +38,9 @@ func TestSMTPMailerSendDigestBuildsExpectedMessage(t *testing.T) {
 		To:   "to@example.com",
 	})
 
-	var gotConfig SMTPMailConfig
+	var gotConfig SMTPConfig
 	var gotMsg string
-	mailer.sendMail = func(ctx context.Context, config SMTPMailConfig, msg []byte) error {
+	mailer.sendMail = func(ctx context.Context, config SMTPConfig, msg []byte) error {
 		_ = ctx
 		gotConfig = config
 		gotMsg = string(msg)
@@ -69,7 +69,7 @@ func TestSMTPMailerSendDigestBuildsExpectedMessage(t *testing.T) {
 }
 
 func TestSMTPMailerSendDigestSkipsWhenNoPostings(t *testing.T) {
-	mailer := NewSMTPMailer(SMTPMailConfig{
+	mailer := NewSMTPMailer(SMTPConfig{
 		Host: "smtp.example.com",
 		Port: 587,
 		User: "smtp-user",
@@ -79,7 +79,7 @@ func TestSMTPMailerSendDigestSkipsWhenNoPostings(t *testing.T) {
 	})
 
 	called := false
-	mailer.sendMail = func(ctx context.Context, config SMTPMailConfig, msg []byte) error {
+	mailer.sendMail = func(ctx context.Context, config SMTPConfig, msg []byte) error {
 		_ = ctx
 		_ = config
 		_ = msg
@@ -93,7 +93,7 @@ func TestSMTPMailerSendDigestSkipsWhenNoPostings(t *testing.T) {
 }
 
 func TestSMTPMailerSendDigestPropagatesContextCancellationDuringSend(t *testing.T) {
-	mailer := NewSMTPMailer(SMTPMailConfig{
+	mailer := NewSMTPMailer(SMTPConfig{
 		Host: "smtp.example.com",
 		Port: 587,
 		User: "smtp-user",
@@ -103,7 +103,7 @@ func TestSMTPMailerSendDigestPropagatesContextCancellationDuringSend(t *testing.
 	})
 
 	started := make(chan struct{})
-	mailer.sendMail = func(ctx context.Context, config SMTPMailConfig, msg []byte) error {
+	mailer.sendMail = func(ctx context.Context, config SMTPConfig, msg []byte) error {
 		_ = config
 		_ = msg
 		close(started)

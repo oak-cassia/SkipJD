@@ -1,4 +1,4 @@
-package crawler
+package mailing
 
 import (
 	"context"
@@ -17,7 +17,7 @@ type Mailer interface {
 	SendDigest(ctx context.Context, runAt time.Time, postings []model.JobPosting) error
 }
 
-type SMTPMailConfig struct {
+type SMTPConfig struct {
 	Host string
 	Port int
 	User string
@@ -31,14 +31,14 @@ const (
 	smtpIOTimeout   = 15 * time.Second
 )
 
-type sendMailFunc func(ctx context.Context, config SMTPMailConfig, msg []byte) error
+type sendMailFunc func(ctx context.Context, config SMTPConfig, msg []byte) error
 
 type SMTPMailer struct {
-	config   SMTPMailConfig
+	config   SMTPConfig
 	sendMail sendMailFunc
 }
 
-func NewSMTPMailer(config SMTPMailConfig) *SMTPMailer {
+func NewSMTPMailer(config SMTPConfig) *SMTPMailer {
 	return &SMTPMailer{
 		config:   config,
 		sendMail: sendSMTPMail,
@@ -86,7 +86,7 @@ func buildDigestBody(postings []model.JobPosting) string {
 	return b.String()
 }
 
-func sendSMTPMail(ctx context.Context, config SMTPMailConfig, msg []byte) error {
+func sendSMTPMail(ctx context.Context, config SMTPConfig, msg []byte) error {
 	addr := net.JoinHostPort(config.Host, strconv.Itoa(config.Port))
 	dialer := net.Dialer{Timeout: smtpDialTimeout}
 
