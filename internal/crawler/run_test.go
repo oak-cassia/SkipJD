@@ -1,87 +1,63 @@
 package crawler
 
 import (
+	"bytes"
 	"context"
-	"os"
-	"path/filepath"
+	"io"
 	"testing"
 	"time"
 
+	"skipjd/internal/gamejob"
 	"skipjd/internal/model"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestBuildSessionStateUsesLatestFinishedAt(t *testing.T) {
+func TestBuildCollectOptionsUsesLatestFinishedAt(t *testing.T) {
 	repo := &stubCrawlRunRepository{
 		latestFinishedAt: timePtr(time.Date(2026, 3, 20, 10, 30, 0, 0, time.UTC)),
 	}
-	crawler := &AICrawler{
-		crawlerRepository: repo,
-		now: func() time.Time {
-			return time.Date(2026, 3, 25, 8, 0, 0, 0, time.UTC)
-		},
-	}
+	crawler := newTestCrawler(t, repo, noopCollect, func() time.Time {
+		return time.Date(2026, 3, 25, 8, 0, 0, 0, time.UTC)
+	}, nil, nil)
 
-	state, err := crawler.buildSessionState(context.Background())
+	opts, err := crawler.buildCollectOptions(context.Background())
 	require.NoError(t, err)
 
-	assert.Equal(t, map[string]any{
-		"preferred_companies": []string{"크래프톤"},
-		"last_updated":        "2026-03-20",
-	}, state)
+	assert.Equal(t, []string{"에피드게임즈"}, opts.PreferredCompanies)
+	assert.Equal(t, "2026-03-20", opts.LastUpdated.In(seoulLocation).Format(dateOnlyFormat))
+	assert.Equal(t, "2026-03-25", opts.TodayDate.In(seoulLocation).Format(dateOnlyFormat))
+	assert.Equal(t, gamejob.DefaultMaxPages, opts.MaxPages)
 	assert.Equal(t, appName, repo.lastSource)
 }
 
-func TestBuildSessionStateConvertsLatestFinishedAtToKSTDate(t *testing.T) {
+func TestBuildCollectOptionsConvertsLatestFinishedAtToKSTDate(t *testing.T) {
 	repo := &stubCrawlRunRepository{
 		latestFinishedAt: timePtr(time.Date(2026, 3, 20, 23, 30, 0, 0, time.UTC)),
 	}
-	crawler := &AICrawler{
-		crawlerRepository: repo,
-		now: func() time.Time {
-			return time.Date(2026, 3, 25, 8, 0, 0, 0, time.UTC)
-		},
-	}
+	crawler := newTestCrawler(t, repo, noopCollect, func() time.Time {
+		return time.Date(2026, 3, 25, 8, 0, 0, 0, time.UTC)
+	}, nil, nil)
 
-	state, err := crawler.buildSessionState(context.Background())
+	opts, err := crawler.buildCollectOptions(context.Background())
 	require.NoError(t, err)
 
-	assert.Equal(t, "2026-03-21", state["last_updated"])
+	assert.Equal(t, "2026-03-21", opts.LastUpdated.In(seoulLocation).Format(dateOnlyFormat))
+	assert.Equal(t, "2026-03-25", opts.TodayDate.In(seoulLocation).Format(dateOnlyFormat))
 }
 
-func TestBuildSessionStateFallsBackToTwoWeeksBeforeNow(t *testing.T) {
+func TestBuildCollectOptionsFallsBackToTwoWeeksBeforeNow(t *testing.T) {
 	now := time.Date(2026, 3, 25, 8, 0, 0, 0, time.FixedZone("KST", 9*60*60))
-	crawler := &AICrawler{
-		crawlerRepository: &stubCrawlRunRepository{},
-		now: func() time.Time {
-			return now
-		},
-	}
+	crawler := newTestCrawler(t, &stubCrawlRunRepository{}, noopCollect, func() time.Time {
+		return now
+	}, nil, nil)
 
-	state, err := crawler.buildSessionState(context.Background())
+	opts, err := crawler.buildCollectOptions(context.Background())
 	require.NoError(t, err)
 
-	assert.Equal(t, "2026-03-11", state["last_updated"])
-}
-
-func TestCrawlerConfigInstructionIncludesLastUpdatedConstraint(t *testing.T) {
-	configPath := filepath.Join("..", "..", "configs", "crawler.yaml")
-
-	data, err := os.ReadFile(configPath)
-	require.NoError(t, err)
-
-	content := string(data)
-	assert.Contains(t, content, "{last_updated}")
-	assert.Contains(t, content, "{preferred_companies}")
-	assert.Contains(t, content, "https://www.gamejob.co.kr/Recruit/joblist?menucode=duty&duty=1")
-	assert.Contains(t, content, "https://www.gamejob.co.kr/Recruit/joblist?menucode=duty&duty=3")
-	assert.Contains(t, content, "https://www.gamejob.co.kr/Recruit/joblist?menucode=duty&duty=16")
-	assert.Contains(t, content, "수정일순")
-	assert.Contains(t, content, "collect postings whose listing modified date is on or after {last_updated}")
-	assert.Contains(t, content, "listing modified date is earlier than {last_updated}")
-	assert.Contains(t, content, "stop scanning that page and move to the next listing page")
+	assert.Equal(t, "2026-03-11", opts.LastUpdated.In(seoulLocation).Format(dateOnlyFormat))
+	assert.Equal(t, "2026-03-25", opts.TodayDate.In(seoulLocation).Format(dateOnlyFormat))
 }
 
 type stubCrawlRunRepository struct {
@@ -110,33 +86,57 @@ func (r *stubCrawlRunRepository) UpsertJobPostings(ctx context.Context, postings
 	return nil
 }
 
-func TestParseCollectedPostingsBuildsJobPostingModels(t *testing.T) {
-	seenAt := time.Date(2026, 3, 25, 9, 0, 0, 0, time.UTC)
-	output := `{"postings":[{"title":"Backend Engineer","company":"Krafton","url":"https://jobs.example.com/postings/123#details","closing_date":"채용 시 마감","min_experience_years":3},{"title":"AI Engineer","company":"Krafton","url":"https://jobs.example.com/postings/456","closing_date":"2026-04-01"}]}`
-
-	postings, err := parseCollectedPostings(output, seenAt)
-	require.NoError(t, err)
-	require.Len(t, postings, 2)
-
-	assert.Equal(t, appName, postings[0].Source)
-	assert.Equal(t, "https://jobs.example.com/postings/123", postings[0].SourceKey)
-	assert.Equal(t, "Backend Engineer", postings[0].Title)
-	assert.Equal(t, "Krafton", postings[0].Company)
-	assert.Equal(t, "https://jobs.example.com/postings/123#details", postings[0].URL)
-	assert.Equal(t, "채용 시 마감", postings[0].ClosingDate)
-	require.NotNil(t, postings[0].MinExperienceYears)
-	assert.Equal(t, 3, *postings[0].MinExperienceYears)
-	assert.True(t, postings[0].FirstSeenAt.Equal(seenAt))
-	assert.True(t, postings[0].LastSeenAt.Equal(seenAt))
-
-	assert.Equal(t, "https://jobs.example.com/postings/456", postings[1].SourceKey)
-	assert.Nil(t, postings[1].MinExperienceYears)
+type stubCollector struct {
+	postings []model.JobPosting
+	lastOpts gamejob.CollectOptions
+	calls    int
 }
 
-func TestParseCollectedPostingsRejectsMissingRequiredFields(t *testing.T) {
-	_, err := parseCollectedPostings(`{"postings":[{"company":"Krafton","url":"https://jobs.example.com/postings/123","closing_date":"채용 시 마감"}]}`, time.Now())
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "title is required")
+func (c *stubCollector) Collect(_ context.Context, opts gamejob.CollectOptions) ([]model.JobPosting, error) {
+	c.calls++
+	c.lastOpts = opts
+	return append([]model.JobPosting(nil), c.postings...), nil
+}
+
+func TestRunCollectsWithScriptAndPersistsResults(t *testing.T) {
+	minYears := 3
+	postings := []model.JobPosting{
+		{
+			Source:             appName,
+			SourceKey:          "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868",
+			Title:              "Server Engineer",
+			Company:            "에피드게임즈",
+			ClosingDate:        "채용시",
+			URL:                "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868",
+			MinExperienceYears: &minYears,
+		},
+	}
+	repo := &stubCrawlRunRepository{
+		latestFinishedAt: timePtr(time.Date(2026, 3, 20, 23, 30, 0, 0, time.UTC)),
+	}
+	collector := &stubCollector{postings: postings}
+	var out bytes.Buffer
+	var progress bytes.Buffer
+
+	crawler := newTestCrawler(t, repo, collector.Collect, func() time.Time {
+		return time.Date(2026, 3, 25, 8, 0, 0, 0, time.UTC)
+	}, &out, &progress)
+
+	err := crawler.Run(context.Background())
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, collector.calls)
+	assert.Equal(t, []string{"에피드게임즈"}, collector.lastOpts.PreferredCompanies)
+	assert.Equal(t, "2026-03-21", collector.lastOpts.LastUpdated.In(seoulLocation).Format(dateOnlyFormat))
+	assert.Equal(t, "2026-03-25", collector.lastOpts.TodayDate.In(seoulLocation).Format(dateOnlyFormat))
+	assert.Equal(t, gamejob.DefaultMaxPages, collector.lastOpts.MaxPages)
+	assert.JSONEq(t, `{"postings":[{"title":"Server Engineer","company":"에피드게임즈","url":"https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868","closing_date":"채용시","min_experience_years":3}]}`, out.String())
+	assert.Equal(t, postings, repo.upsertedPostings)
+	require.NotNil(t, repo.createdCrawlRun)
+	assert.Equal(t, appName, repo.createdCrawlRun.Source)
+	assert.Contains(t, progress.String(), "collect_options preferred_companies=에피드게임즈 last_updated=2026-03-21 today_date=2026-03-25 max_pages=10")
+	assert.Contains(t, progress.String(), "parsed_postings=1")
+	assert.Contains(t, progress.String(), "crawler run persisted successfully")
 }
 
 func TestPersistCrawlResultsStoresPostingsAndCreatesRun(t *testing.T) {
@@ -152,9 +152,7 @@ func TestPersistCrawlResultsStoresPostingsAndCreatesRun(t *testing.T) {
 		},
 	}
 	repo := &stubCrawlRunRepository{}
-	crawler := &AICrawler{
-		crawlerRepository: repo,
-	}
+	crawler := newTestCrawler(t, repo, noopCollect, nil, nil, nil)
 
 	err := crawler.persistCrawlResults(context.Background(), postings, now.Add(-5*time.Minute), now)
 	require.NoError(t, err)
@@ -166,4 +164,24 @@ func TestPersistCrawlResultsStoresPostingsAndCreatesRun(t *testing.T) {
 
 func timePtr(t time.Time) *time.Time {
 	return &t
+}
+
+func newTestCrawler(
+	t *testing.T,
+	repo crawlRunRepository,
+	collect collectFunc,
+	now func() time.Time,
+	out io.Writer,
+	progressOut io.Writer,
+) *Crawler {
+	t.Helper()
+
+	crawler, err := newCrawler(out, progressOut, repo, collect, now)
+	require.NoError(t, err)
+
+	return crawler
+}
+
+func noopCollect(_ context.Context, _ gamejob.CollectOptions) ([]model.JobPosting, error) {
+	return nil, nil
 }

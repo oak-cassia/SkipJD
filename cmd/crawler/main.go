@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"log"
-	"os"
 
 	"github.com/joho/godotenv"
 
@@ -13,12 +12,11 @@ import (
 	"skipjd/internal/repository"
 )
 
-const defaultConfigPath = "configs/crawler.yaml"
-
 func main() {
 	_ = godotenv.Load()
 
 	ctx := context.Background()
+
 	cfg := config.LoadDatabaseConfig()
 
 	db, err := database.NewGormDB(cfg)
@@ -28,12 +26,7 @@ func main() {
 
 	crawlerRepository := repository.NewCrawlerRepository(db)
 
-	configPath := os.Getenv("CRAWLER_CONFIG_PATH")
-	if configPath == "" {
-		configPath = defaultConfigPath
-	}
-
-	if err := crawler.Run(ctx, configPath, crawlerRepository); err != nil {
+	if err := crawler.Run(ctx, crawlerRepository); err != nil {
 		log.Fatalf("failed to run crawler: %v", err)
 	}
 }

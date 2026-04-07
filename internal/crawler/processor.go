@@ -14,7 +14,7 @@ type crawlRunRepository interface {
 	UpsertJobPostings(ctx context.Context, postings []model.JobPosting) error
 }
 
-func (c *AICrawler) persistCrawlResults(ctx context.Context, postings []model.JobPosting, startedAt, finishedAt time.Time) error {
+func (c *Crawler) persistCrawlResults(ctx context.Context, postings []model.JobPosting, startedAt, finishedAt time.Time) error {
 	if err := c.crawlerRepository.UpsertJobPostings(ctx, postings); err != nil {
 		return fmt.Errorf("upsert job postings: %w", err)
 	}
