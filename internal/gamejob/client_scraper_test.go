@@ -14,8 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"skipjd/internal/model"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -72,13 +70,7 @@ func TestParseMinExperienceYears(t *testing.T) {
 	assert.Equal(t, 1, parseMinExperienceYears("경력 1-5년차"))
 }
 
-func TestCanonicalCompanyNameStripsCorporateMarkers(t *testing.T) {
-	assert.Equal(t, "에피드게임즈", canonicalCompanyName("㈜에피드게임즈"))
-	assert.Equal(t, "드림모션", canonicalCompanyName("(주) 드림모션"))
-	assert.Equal(t, "웹젠", canonicalCompanyName("주식회사 웹젠"))
-}
-
-func TestCollectStopsAtCutoffAndFiltersPreferredCompanies(t *testing.T) {
+func TestScrapeStopsAtCutoffCallback(t *testing.T) {
 	var requestedPages []string
 	client := &http.Client{
 		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -150,29 +142,32 @@ func TestCollectStopsAtCutoffAndFiltersPreferredCompanies(t *testing.T) {
 		return time.Date(2026, 4, 7, 9, 0, 0, 0, scraper.loc)
 	}
 
-	postings, err := scraper.Collect(context.Background(), CollectOptions{
-		PreferredCompanies: []string{"에피드게임즈"},
-		LastUpdated:        time.Date(2026, 4, 4, 0, 0, 0, 0, scraper.loc),
-		TodayDate:          time.Date(2026, 4, 7, 0, 0, 0, 0, scraper.loc),
+	postings, err := scraper.Scrape(context.Background(), ScrapeOptions{
+		TodayDate: time.Date(2026, 4, 7, 0, 0, 0, 0, scraper.loc),
+		Stop: func(posting ScrapedPosting) bool {
+			cutoffDate := time.Date(2026, 4, 4, 0, 0, 0, 0, scraper.loc)
+			return posting.ObservedDate.Before(cutoffDate)
+		},
 	})
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"1", "2"}, requestedPages)
-	require.Len(t, postings, 2)
+	require.Len(t, postings, 3)
 	assert.True(t, slices.Equal([]string{
+		"Skip me",
 		"[트릭컬 리바이브] 콘텐츠 클라이언트 프로그래머 추가 모집",
 		"[트릭컬 리바이브] 전투 클라이언트 프로그래머 추가 모집",
-	}, []string{postings[0].Title, postings[1].Title}))
-	assert.Equal(t, SourceName, postings[0].Source)
-	assert.Equal(t, "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868", postings[0].SourceKey)
-	assert.Equal(t, "상시", postings[0].ClosingDate)
-	require.NotNil(t, postings[0].MinExperienceYears)
-	assert.Equal(t, 3, *postings[0].MinExperienceYears)
-	assert.Equal(t, "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868", postings[0].URL)
-	assert.Equal(t, postings[0].FirstSeenAt, postings[0].LastSeenAt)
+	}, []string{postings[0].Title, postings[1].Title, postings[2].Title}))
+	assert.Equal(t, "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=100", postings[0].SourceKey)
+	assert.Equal(t, "2026-04-07", postings[0].ObservedDate.Format("2006-01-02"))
+	assert.Equal(t, "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868", postings[1].SourceKey)
+	assert.Equal(t, "상시", postings[1].ClosingDate)
+	assert.Equal(t, 3, postings[1].MinExperienceYears)
+	assert.Equal(t, "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868", postings[1].URL)
+	assert.Equal(t, "2026-04-04", postings[2].ObservedDate.Format("2006-01-02"))
 }
 
-func TestCollectStopsAtDefaultMaxPages(t *testing.T) {
+func TestScrapeStopsAtDefaultMaxPages(t *testing.T) {
 	var requestedPages []string
 	client := &http.Client{
 		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -198,10 +193,8 @@ func TestCollectStopsAtDefaultMaxPages(t *testing.T) {
 		return time.Date(2026, 4, 7, 9, 0, 0, 0, scraper.loc)
 	}
 
-	postings, err := scraper.Collect(context.Background(), CollectOptions{
-		PreferredCompanies: []string{"에피드게임즈"},
-		LastUpdated:        time.Date(2026, 4, 4, 0, 0, 0, 0, scraper.loc),
-		TodayDate:          time.Date(2026, 4, 7, 0, 0, 0, 0, scraper.loc),
+	postings, err := scraper.Scrape(context.Background(), ScrapeOptions{
+		TodayDate: time.Date(2026, 4, 7, 0, 0, 0, 0, scraper.loc),
 	})
 	require.NoError(t, err)
 
@@ -211,7 +204,7 @@ func TestCollectStopsAtDefaultMaxPages(t *testing.T) {
 	assert.Len(t, postings, DefaultMaxPages)
 }
 
-func TestCollectStopsOnEmptyPage(t *testing.T) {
+func TestScrapeStopsOnEmptyPage(t *testing.T) {
 	var requestedPages []string
 	client := &http.Client{
 		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -221,11 +214,9 @@ func TestCollectStopsOnEmptyPage(t *testing.T) {
 	}
 
 	scraper := NewClientScraper(client)
-	postings, err := scraper.Collect(context.Background(), CollectOptions{
-		PreferredCompanies: []string{"에피드게임즈"},
-		LastUpdated:        time.Date(2026, 4, 4, 0, 0, 0, 0, scraper.loc),
-		TodayDate:          time.Date(2026, 4, 7, 0, 0, 0, 0, scraper.loc),
-		MaxPages:           3,
+	postings, err := scraper.Scrape(context.Background(), ScrapeOptions{
+		TodayDate: time.Date(2026, 4, 7, 0, 0, 0, 0, scraper.loc),
+		MaxPages:  3,
 	})
 	require.NoError(t, err)
 
@@ -233,7 +224,7 @@ func TestCollectStopsOnEmptyPage(t *testing.T) {
 	assert.Empty(t, postings)
 }
 
-func TestCollectStopsWhenPaginationEnds(t *testing.T) {
+func TestScrapeStopsWhenPaginationEnds(t *testing.T) {
 	var requestedPages []string
 	client := &http.Client{
 		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -250,11 +241,9 @@ func TestCollectStopsWhenPaginationEnds(t *testing.T) {
 	}
 
 	scraper := NewClientScraper(client)
-	postings, err := scraper.Collect(context.Background(), CollectOptions{
-		PreferredCompanies: []string{"에피드게임즈"},
-		LastUpdated:        time.Date(2026, 4, 4, 0, 0, 0, 0, scraper.loc),
-		TodayDate:          time.Date(2026, 4, 7, 0, 0, 0, 0, scraper.loc),
-		MaxPages:           3,
+	postings, err := scraper.Scrape(context.Background(), ScrapeOptions{
+		TodayDate: time.Date(2026, 4, 7, 0, 0, 0, 0, scraper.loc),
+		MaxPages:  3,
 	})
 	require.NoError(t, err)
 
@@ -263,35 +252,61 @@ func TestCollectStopsWhenPaginationEnds(t *testing.T) {
 	assert.Equal(t, "Only page", postings[0].Title)
 }
 
-func TestCollectReturnsErrorForUnsupportedModifyText(t *testing.T) {
+func TestScrapeWithoutStopContinuesPastOlderRows(t *testing.T) {
+	var requestedPages []string
+	client := &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			page := r.FormValue("page")
+			requestedPages = append(requestedPages, page)
+
+			switch page {
+			case "1":
+				return htmlResponse(r, buildListPageHTML(1, []testListRow{{
+					company:     "에피드게임즈",
+					title:       "Old but still collected",
+					url:         "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=500001",
+					expText:     "경력무관",
+					closingDate: "채용시",
+					modifyText:  "03/30(월) 등록",
+				}}, true)), nil
+			case "2":
+				return htmlResponse(r, buildListPageHTML(2, []testListRow{{
+					company:     "에피드게임즈",
+					title:       "Second page",
+					url:         "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=500002",
+					expText:     "신입",
+					closingDate: "채용시",
+					modifyText:  "오늘 수정",
+				}}, false)), nil
+			default:
+				t.Fatalf("unexpected page request: %s", page)
+			}
+			return nil, nil
+		}),
+	}
+
+	scraper := NewClientScraper(client)
+	scraper.now = func() time.Time {
+		return time.Date(2026, 4, 7, 9, 0, 0, 0, scraper.loc)
+	}
+
+	postings, err := scraper.Scrape(context.Background(), ScrapeOptions{
+		TodayDate: time.Date(2026, 4, 7, 0, 0, 0, 0, scraper.loc),
+		MaxPages:  3,
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"1", "2"}, requestedPages)
+	require.Len(t, postings, 2)
+	assert.Equal(t, "Old but still collected", postings[0].Title)
+	assert.Equal(t, "Second page", postings[1].Title)
+}
+
+func TestParseObservedDateReturnsErrorForUnsupportedModifyText(t *testing.T) {
 	scraper := newTestScraper()
 	_, err := scraper.parseObservedDate(time.Date(2026, 4, 7, 0, 0, 0, 0, scraper.loc), "방금 전 수정")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported modify date format")
-}
-
-func TestNewOutputUsesRepositoryReadyShape(t *testing.T) {
-	now := time.Date(2026, 4, 7, 9, 0, 0, 0, time.FixedZone("KST", 9*60*60))
-	minYears := 3
-
-	output := NewOutput([]model.JobPosting{{
-		Source:             SourceName,
-		SourceKey:          "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868",
-		Title:              "title",
-		Company:            "company",
-		ClosingDate:        "상시",
-		URL:                "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868",
-		MinExperienceYears: &minYears,
-		FirstSeenAt:        now,
-		LastSeenAt:         now,
-	}})
-
-	require.Len(t, output.Postings, 1)
-	assert.Equal(t, SourceName, output.Postings[0].Source)
-	assert.Equal(t, "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868", output.Postings[0].SourceKey)
-	require.NotNil(t, output.Postings[0].MinExperienceYears)
-	assert.Equal(t, 3, *output.Postings[0].MinExperienceYears)
-	assert.Equal(t, now, output.Postings[0].FirstSeenAt)
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

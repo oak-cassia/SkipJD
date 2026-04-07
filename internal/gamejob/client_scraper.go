@@ -12,8 +12,6 @@ import (
 	"time"
 
 	"golang.org/x/net/html"
-
-	"skipjd/internal/model"
 )
 
 const (
@@ -36,27 +34,20 @@ var (
 	yearsPattern      = regexp.MustCompile(`(\d+)\s*년`)
 )
 
-type OutputPosting struct {
-	Source             string    `json:"source"`
+type ScrapedPosting struct {
 	SourceKey          string    `json:"source_key"`
 	Title              string    `json:"title"`
 	Company            string    `json:"company"`
-	ClosingDate        string    `json:"closing_date"`
 	URL                string    `json:"url"`
-	MinExperienceYears *int      `json:"min_experience_years"`
-	FirstSeenAt        time.Time `json:"first_seen_at"`
-	LastSeenAt         time.Time `json:"last_seen_at"`
+	ClosingDate        string    `json:"closing_date"`
+	MinExperienceYears int       `json:"min_experience_years"`
+	ObservedDate       time.Time `json:"observed_date"`
 }
 
-type Output struct {
-	Postings []OutputPosting `json:"postings"`
-}
-
-type CollectOptions struct {
-	PreferredCompanies []string
-	LastUpdated        time.Time
-	TodayDate          time.Time
-	MaxPages           int
+type ScrapeOptions struct {
+	TodayDate time.Time
+	MaxPages  int
+	Stop      func(ScrapedPosting) bool
 }
 
 type ClientScraper struct {
@@ -103,31 +94,18 @@ func NewClientScraper(client *http.Client) *ClientScraper {
 	}
 }
 
-func (s *ClientScraper) Collect(ctx context.Context, opts CollectOptions) ([]model.JobPosting, error) {
-	if len(opts.PreferredCompanies) == 0 {
-		return nil, fmt.Errorf("preferred companies are required")
-	}
-	if opts.LastUpdated.IsZero() {
-		return nil, fmt.Errorf("last updated date is required")
-	}
+func (s *ClientScraper) Scrape(ctx context.Context, opts ScrapeOptions) ([]ScrapedPosting, error) {
 	if opts.TodayDate.IsZero() {
 		return nil, fmt.Errorf("today date is required")
 	}
 
-	cutoffDate := s.normalizeDate(opts.LastUpdated)
 	todayDate := s.normalizeDate(opts.TodayDate)
-	companySet := normalizeCompanies(opts.PreferredCompanies)
-	if len(companySet) == 0 {
-		return nil, fmt.Errorf("preferred companies are required")
-	}
 	maxPages := opts.MaxPages
 	if maxPages <= 0 {
 		maxPages = DefaultMaxPages
 	}
 
-	collectedAt := s.now().In(s.loc)
-	postings := make([]model.JobPosting, 0)
-	seenURLs := make(map[string]struct{})
+	postings := make([]ScrapedPosting, 0)
 
 	for page := 1; page <= maxPages; page++ {
 		htmlText, err := s.fetchPage(ctx, page)
@@ -149,36 +127,26 @@ func (s *ClientScraper) Collect(ctx context.Context, opts CollectOptions) ([]mod
 			if err != nil {
 				return nil, err
 			}
-			if observedDate.Before(cutoffDate) {
-				stop = true
-				break
-			}
-
-			if _, ok := companySet[canonicalCompanyName(row.company)]; !ok {
-				continue
-			}
-			if _, exists := seenURLs[row.url]; exists {
-				continue
-			}
-
-			minExperienceYears := intPtr(parseMinExperienceYears(row.expText))
 			sourceKey, err := buildSourceKey(row.url)
 			if err != nil {
 				return nil, err
 			}
 
-			postings = append(postings, model.JobPosting{
-				Source:             SourceName,
+			scrapedPosting := ScrapedPosting{
 				SourceKey:          sourceKey,
 				Title:              row.title,
 				Company:            row.company,
 				ClosingDate:        row.closingDate,
 				URL:                row.url,
-				MinExperienceYears: minExperienceYears,
-				FirstSeenAt:        collectedAt,
-				LastSeenAt:         collectedAt,
-			})
-			seenURLs[row.url] = struct{}{}
+				MinExperienceYears: parseMinExperienceYears(row.expText),
+				ObservedDate:       observedDate,
+			}
+			if opts.Stop != nil && opts.Stop(scrapedPosting) {
+				stop = true
+				break
+			}
+
+			postings = append(postings, scrapedPosting)
 		}
 
 		if stop || !parsedPage.hasNext {
@@ -187,24 +155,6 @@ func (s *ClientScraper) Collect(ctx context.Context, opts CollectOptions) ([]mod
 	}
 
 	return postings, nil
-}
-
-func NewOutput(postings []model.JobPosting) Output {
-	items := make([]OutputPosting, 0, len(postings))
-	for _, posting := range postings {
-		items = append(items, OutputPosting{
-			Source:             posting.Source,
-			SourceKey:          posting.SourceKey,
-			Title:              posting.Title,
-			Company:            posting.Company,
-			ClosingDate:        posting.ClosingDate,
-			URL:                posting.URL,
-			MinExperienceYears: cloneIntPointer(posting.MinExperienceYears),
-			FirstSeenAt:        posting.FirstSeenAt,
-			LastSeenAt:         posting.LastSeenAt,
-		})
-	}
-	return Output{Postings: items}
 }
 
 func (s *ClientScraper) fetchPage(ctx context.Context, page int) (string, error) {
@@ -399,61 +349,6 @@ func parseMinExperienceYears(expText string) int {
 	}
 
 	return 0
-}
-
-func intPtr(value int) *int {
-	copied := value
-	return &copied
-}
-
-func cloneIntPointer(value *int) *int {
-	if value == nil {
-		return nil
-	}
-	return intPtr(*value)
-}
-
-func normalizeCompanies(companies []string) map[string]struct{} {
-	normalized := make(map[string]struct{}, len(companies))
-	for _, company := range companies {
-		trimmed := canonicalCompanyName(company)
-		if trimmed == "" {
-			continue
-		}
-		normalized[trimmed] = struct{}{}
-	}
-	return normalized
-}
-
-func canonicalCompanyName(value string) string {
-	normalized := normalizeSpace(value)
-	if normalized == "" {
-		return ""
-	}
-
-	prefixes := []string{"㈜", "(주)", "（주）", "주식회사"}
-	suffixes := []string{"㈜", "(주)", "（주）", "주식회사"}
-
-	for {
-		changed := false
-		for _, prefix := range prefixes {
-			if strings.HasPrefix(normalized, prefix) {
-				normalized = normalizeSpace(strings.TrimPrefix(normalized, prefix))
-				changed = true
-			}
-		}
-		for _, suffix := range suffixes {
-			if strings.HasSuffix(normalized, suffix) {
-				normalized = normalizeSpace(strings.TrimSuffix(normalized, suffix))
-				changed = true
-			}
-		}
-		if !changed {
-			break
-		}
-	}
-
-	return normalized
 }
 
 func buildSourceKey(rawURL string) (string, error) {

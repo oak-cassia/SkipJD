@@ -10,13 +10,12 @@ import (
 
 	agentoutput "skipjd/internal/agent/output"
 	"skipjd/internal/gamejob"
-	"skipjd/internal/model"
 	"skipjd/internal/repository"
 )
 
 const appName = gamejob.SourceName
 
-type collectFunc func(ctx context.Context, opts gamejob.CollectOptions) ([]model.JobPosting, error)
+type collectFunc func(ctx context.Context, opts gamejob.ScrapeOptions) ([]gamejob.ScrapedPosting, error)
 
 type Crawler struct {
 	out         io.Writer
@@ -63,7 +62,7 @@ func newCrawler(
 func NewCrawler(out io.Writer, crawlerRepository *repository.CrawlerRepository) (*Crawler, error) {
 	scraper := gamejob.NewClientScraper(nil)
 
-	return newCrawler(out, nil, crawlerRepository, scraper.Collect, nil)
+	return newCrawler(out, nil, crawlerRepository, scraper.Scrape, nil)
 }
 
 func (c *Crawler) Run(ctx context.Context) error {
@@ -84,11 +83,18 @@ func (c *Crawler) Run(ctx context.Context) error {
 		return fmt.Errorf("write collect options output: %w", err)
 	}
 
-	postings, err := c.collect(ctx, opts)
+	scrapedPostings, err := c.collect(ctx, gamejob.ScrapeOptions{
+		TodayDate: opts.TodayDate,
+		MaxPages:  opts.MaxPages,
+		Stop: func(scraped gamejob.ScrapedPosting) bool {
+			return scraped.ObservedDate.Before(opts.LastUpdated)
+		},
+	})
 	if err != nil {
-		return fmt.Errorf("collect postings: %w", err)
+		return fmt.Errorf("scrape postings: %w", err)
 	}
 
+	postings := c.toJobPostings(scrapedPostings, opts.PreferredCompanies, startedAt)
 	finishedAt := c.now().Local()
 	outputText, err := agentoutput.Encode(postings)
 	if err != nil {
@@ -113,7 +119,7 @@ func (c *Crawler) Run(ctx context.Context) error {
 
 func Run(ctx context.Context, crawlerRepository *repository.CrawlerRepository) error {
 	scraper := gamejob.NewClientScraper(nil)
-	crawler, err := newCrawler(os.Stdout, os.Stderr, crawlerRepository, scraper.Collect, nil)
+	crawler, err := newCrawler(os.Stdout, os.Stderr, crawlerRepository, scraper.Scrape, nil)
 	if err != nil {
 		return err
 	}

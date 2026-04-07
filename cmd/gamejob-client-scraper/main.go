@@ -14,8 +14,6 @@ import (
 )
 
 func main() {
-	companiesFlag := flag.String("companies", "", "Comma-separated exact company names")
-	lastUpdatedFlag := flag.String("last-updated", "", "Inclusive cutoff date in YYYY-MM-DD (Seoul)")
 	todayDateFlag := flag.String("today-date", "", "Reference date in YYYY-MM-DD (Seoul); defaults to current Seoul date")
 	maxPagesFlag := flag.Int("max-pages", gamejob.DefaultMaxPages, "Maximum number of listing pages to scan")
 	flag.Parse()
@@ -30,34 +28,23 @@ func main() {
 		todayDateValue = time.Now().In(loc).Format("2006-01-02")
 	}
 
-	lastUpdated, err := parseDate(*lastUpdatedFlag, loc)
-	if err != nil {
-		log.Fatalf("invalid --last-updated: %v", err)
-	}
 	todayDate, err := parseDate(todayDateValue, loc)
 	if err != nil {
 		log.Fatalf("invalid --today-date: %v", err)
 	}
 
-	companies := parseCompanies(*companiesFlag)
-	if len(companies) == 0 {
-		log.Fatalf("--companies is required")
-	}
-
 	scraper := gamejob.NewClientScraper(nil)
-	postings, err := scraper.Collect(context.Background(), gamejob.CollectOptions{
-		PreferredCompanies: companies,
-		LastUpdated:        lastUpdated,
-		TodayDate:          todayDate,
-		MaxPages:           *maxPagesFlag,
+	postings, err := scraper.Scrape(context.Background(), gamejob.ScrapeOptions{
+		TodayDate: todayDate,
+		MaxPages:  *maxPagesFlag,
 	})
 	if err != nil {
-		log.Fatalf("failed to collect postings: %v", err)
+		log.Fatalf("failed to scrape postings: %v", err)
 	}
 
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(gamejob.NewOutput(postings)); err != nil {
+	if err := encoder.Encode(newOutput(postings, loc)); err != nil {
 		log.Fatalf("failed to encode output: %v", err)
 	}
 }
@@ -70,15 +57,33 @@ func parseDate(value string, loc *time.Location) (time.Time, error) {
 	return time.ParseInLocation("2006-01-02", trimmed, loc)
 }
 
-func parseCompanies(value string) []string {
-	parts := strings.Split(value, ",")
-	companies := make([]string, 0, len(parts))
-	for _, part := range parts {
-		trimmed := strings.TrimSpace(part)
-		if trimmed == "" {
-			continue
-		}
-		companies = append(companies, trimmed)
+type output struct {
+	Postings []outputPosting `json:"postings"`
+}
+
+type outputPosting struct {
+	SourceKey          string `json:"source_key"`
+	Title              string `json:"title"`
+	Company            string `json:"company"`
+	URL                string `json:"url"`
+	ClosingDate        string `json:"closing_date"`
+	MinExperienceYears int    `json:"min_experience_years"`
+	ObservedDate       string `json:"observed_date"`
+}
+
+func newOutput(postings []gamejob.ScrapedPosting, loc *time.Location) output {
+	items := make([]outputPosting, 0, len(postings))
+	for _, posting := range postings {
+		items = append(items, outputPosting{
+			SourceKey:          posting.SourceKey,
+			Title:              posting.Title,
+			Company:            posting.Company,
+			URL:                posting.URL,
+			ClosingDate:        posting.ClosingDate,
+			MinExperienceYears: posting.MinExperienceYears,
+			ObservedDate:       posting.ObservedDate.In(loc).Format("2006-01-02"),
+		})
 	}
-	return companies
+
+	return output{Postings: items}
 }
