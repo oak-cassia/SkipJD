@@ -9,6 +9,7 @@
 2. 소스 실행 및 공고 링크 수집
     - seed URL에 접속
     - agent-browser CLI 기반으로 수집 진행
+    - agent 설정은 `configs/agent.yaml`에서 관리
     - 현재는 별도 개발 리소스 없이 시작
     - 공고 링크 수집
         - 제목, 회사명, 마감일, 링크 추출
