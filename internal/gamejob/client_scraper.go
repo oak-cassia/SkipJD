@@ -17,13 +17,13 @@ import (
 const (
 	defaultBaseURL   = "https://www.gamejob.co.kr"
 	jobListPath      = "/Recruit/joblist"
-	jobListQuery     = "menucode=duty&duty=1"
 	jobListAjaxPath  = "/Recruit/_GI_Job_List/"
 	defaultUserAgent = "Mozilla/5.0"
-	clientDutyCode   = "1"
 	DefaultMaxPages  = 10
 	SourceName       = "browser_agent"
 )
+
+var defaultDutyCodes = []string{"1", "3", "16"}
 
 var (
 	hoursAgoPattern   = regexp.MustCompile(`(\d+)\s*시간\s*전`)
@@ -107,66 +107,68 @@ func (s *ClientScraper) Scrape(ctx context.Context, opts ScrapeOptions) ([]Scrap
 
 	postings := make([]ScrapedPosting, 0)
 
-	for page := 1; page <= maxPages; page++ {
-		htmlText, err := s.fetchPage(ctx, page)
-		if err != nil {
-			return nil, err
-		}
-
-		parsedPage, err := s.parseListPage(htmlText, page)
-		if err != nil {
-			return nil, err
-		}
-		if len(parsedPage.rows) == 0 {
-			break
-		}
-
-		stop := false
-		for _, row := range parsedPage.rows {
-			observedDate, err := s.parseObservedDate(todayDate, row.modifyText)
-			if err != nil {
-				return nil, err
-			}
-			sourceKey, err := buildSourceKey(row.url)
+	for _, dutyCode := range defaultDutyCodes {
+		for page := 1; page <= maxPages; page++ {
+			htmlText, err := s.fetchPage(ctx, dutyCode, page)
 			if err != nil {
 				return nil, err
 			}
 
-			scrapedPosting := ScrapedPosting{
-				SourceKey:          sourceKey,
-				Title:              row.title,
-				Company:            row.company,
-				ClosingDate:        row.closingDate,
-				URL:                row.url,
-				MinExperienceYears: parseMinExperienceYears(row.expText),
-				ObservedDate:       observedDate,
+			parsedPage, err := s.parseListPage(htmlText, page)
+			if err != nil {
+				return nil, err
 			}
-			if opts.Stop != nil && opts.Stop(scrapedPosting) {
-				stop = true
+			if len(parsedPage.rows) == 0 {
 				break
 			}
 
-			postings = append(postings, scrapedPosting)
-		}
+			stop := false
+			for _, row := range parsedPage.rows {
+				observedDate, err := s.parseObservedDate(todayDate, row.modifyText)
+				if err != nil {
+					return nil, err
+				}
+				sourceKey, err := buildSourceKey(row.url)
+				if err != nil {
+					return nil, err
+				}
 
-		if stop || !parsedPage.hasNext {
-			break
+				scrapedPosting := ScrapedPosting{
+					SourceKey:          sourceKey,
+					Title:              row.title,
+					Company:            row.company,
+					ClosingDate:        row.closingDate,
+					URL:                row.url,
+					MinExperienceYears: parseMinExperienceYears(row.expText),
+					ObservedDate:       observedDate,
+				}
+				if opts.Stop != nil && opts.Stop(scrapedPosting) {
+					stop = true
+					break
+				}
+
+				postings = append(postings, scrapedPosting)
+			}
+
+			if stop || !parsedPage.hasNext {
+				break
+			}
 		}
 	}
 
 	return postings, nil
 }
 
-func (s *ClientScraper) fetchPage(ctx context.Context, page int) (string, error) {
+func (s *ClientScraper) fetchPage(ctx context.Context, dutyCode string, page int) (string, error) {
 	form := url.Values{}
 	form.Set("condition[dutyCtgr]", "0")
-	form.Set("condition[duty]", clientDutyCode)
+	form.Set("condition[duty]", dutyCode)
 	form.Set("condition[reg_dt]", "0")
 	form.Set("condition[menucode]", "duty")
 	form.Set("condition[searchtype]", "B")
-	form.Add("condition[dutyArr][]", clientDutyCode)
-	form.Add("condition[dutyCtgrSelect][]", clientDutyCode)
-	form.Add("condition[dutySelect][]", clientDutyCode)
+	form.Add("condition[dutyArr][]", dutyCode)
+	form.Add("condition[dutyCtgrSelect][]", dutyCode)
+	form.Add("condition[dutySelect][]", dutyCode)
 	form.Set("page", strconv.Itoa(page))
 	form.Set("direct", "0")
 	form.Set("order", "4")
@@ -183,7 +185,7 @@ func (s *ClientScraper) fetchPage(ctx context.Context, page int) (string, error)
 	req.Header.Set("User-Agent", defaultUserAgent)
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	req.Header.Set("Origin", s.origin())
-	req.Header.Set("Referer", s.refererURL())
+	req.Header.Set("Referer", s.refererURL(dutyCode))
 
 	resp, err := s.client.Do(req)
 	if err != nil {
@@ -398,10 +400,13 @@ func (s *ClientScraper) origin() string {
 	return s.baseURL.Scheme + "://" + s.baseURL.Host
 }
 
-func (s *ClientScraper) refererURL() string {
+func (s *ClientScraper) refererURL(dutyCode string) string {
 	return s.baseURL.ResolveReference(&url.URL{
-		Path:     jobListPath,
-		RawQuery: jobListQuery,
+		Path: jobListPath,
+		RawQuery: url.Values{
+			"menucode": {"duty"},
+			"duty":     {dutyCode},
+		}.Encode(),
 	}).String()
 }
 

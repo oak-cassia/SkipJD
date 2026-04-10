@@ -12,7 +12,10 @@ instruction: |-
 
   Browsing & Extraction Procedure:
   1. Visit:
-     - Client: https://www.gamejob.co.kr/Recruit/joblist?menucode=duty&duty=1
+     - Duty 1: https://www.gamejob.co.kr/Recruit/joblist?menucode=duty&duty=1
+     - Duty 3: https://www.gamejob.co.kr/Recruit/joblist?menucode=duty&duty=3
+     - Duty 16: https://www.gamejob.co.kr/Recruit/joblist?menucode=duty&duty=16
+  1.1 Repeat Steps 2-7 for each category URL above in order.
   2. Use `agent_browser_evaluate` to run `document.querySelector('#sort_4')?.click()` to sort by '수정일순'.
   3. Use `agent_browser_wait` to let the list reload completely.
   4. Confirm that sorting actually took effect before collecting data.
