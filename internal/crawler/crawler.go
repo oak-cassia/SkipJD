@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"time"
 
 	agentoutput "skipjd/internal/agent/output"
@@ -74,8 +73,7 @@ func (c *Crawler) Run(ctx context.Context) error {
 	}
 	if _, err := fmt.Fprintf(
 		c.progressWriter(),
-		"collect_options preferred_companies=%s last_updated=%s today_date=%s max_pages=%d\n",
-		strings.Join(opts.PreferredCompanies, ","),
+		"collect_options last_updated=%s today_date=%s max_pages=%d\n",
 		opts.LastUpdated.In(seoulLocation).Format(dateOnlyFormat),
 		opts.TodayDate.In(seoulLocation).Format(dateOnlyFormat),
 		opts.MaxPages,
@@ -94,7 +92,7 @@ func (c *Crawler) Run(ctx context.Context) error {
 		return fmt.Errorf("scrape postings: %w", err)
 	}
 
-	postings := c.toJobPostings(scrapedPostings, opts.PreferredCompanies, startedAt)
+	postings := c.toJobPostings(scrapedPostings, startedAt)
 	finishedAt := c.now().Local()
 	outputText, err := agentoutput.Encode(postings)
 	if err != nil {

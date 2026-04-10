@@ -26,10 +26,6 @@ func NewBrowserAgent(cfg Config, modelInstance model.LLM) (adkagent.Agent, error
 		InputSchema: &genai.Schema{
 			Type: "object",
 			Properties: map[string]*genai.Schema{
-				"preferred_companies": {
-					Type:  "array",
-					Items: &genai.Schema{Type: "string"},
-				},
 				"last_updated": {
 					Type:   "string",
 					Format: "date",
@@ -39,7 +35,7 @@ func NewBrowserAgent(cfg Config, modelInstance model.LLM) (adkagent.Agent, error
 					Format: "date",
 				},
 			},
-			Required: []string{"preferred_companies", "last_updated", "today_date"},
+			Required: []string{"last_updated", "today_date"},
 		},
 		OutputSchema: &genai.Schema{
 			Type: "object",

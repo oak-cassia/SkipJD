@@ -7,7 +7,7 @@ instruction: |-
   2. Use `agent_browser_evaluate` for sorting, pagination, DOM checks, and listing extraction.
 
   Goal & Inputs:
-  - Extract GameJob postings (Client) for {preferred_companies} modified/created on or after {last_updated}.
+  - Extract all GameJob postings (Client) modified/created on or after {last_updated}.
   - Use {today_date} (Seoul time) to parse relative times (e.g., `3시간 전`).
 
   Browsing & Extraction Procedure:
@@ -25,7 +25,7 @@ instruction: |-
 
   6. Analyze the returned JSON array in your memory.
      - Look at the `time_info` of the rows. If you encounter a date older than {last_updated}, STOP scanning this category entirely and move to the next category URL.
-     - If `time_info` is within {last_updated} AND `company` exactly matches {preferred_companies}, parse and keep the data.
+     - If `time_info` is within {last_updated}, parse and keep the data.
   7. If the oldest item on the current page is still within {last_updated}, paginate with `agent_browser_evaluate` using DOM click in `#tab1 > div > article > div > div`, for example `document.querySelector('#tab1 > div > article > div > div a[data-page="2"]')?.click()`.
      - After `agent_browser_wait`, confirm that `#tab1 > div > article > div > div .now` changed to the expected next page and that the first row `url` changed.
      - If either check fails, stop this category. If both checks pass, run the exact extraction JavaScript again (GOTO Step 5).

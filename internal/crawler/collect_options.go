@@ -12,15 +12,10 @@ const dateOnlyFormat = "2006-01-02"
 
 var seoulLocation = time.FixedZone("Asia/Seoul", 9*60*60)
 
-var defaultPreferredCompanies = []string{
-	"드림 모션", "드림모션",
-}
-
 type collectOptions struct {
-	PreferredCompanies []string
-	LastUpdated        time.Time
-	TodayDate          time.Time
-	MaxPages           int
+	LastUpdated time.Time
+	TodayDate   time.Time
+	MaxPages    int
 }
 
 func (c *Crawler) buildCollectOptions(ctx context.Context) (collectOptions, error) {
@@ -30,10 +25,9 @@ func (c *Crawler) buildCollectOptions(ctx context.Context) (collectOptions, erro
 	}
 
 	return collectOptions{
-		PreferredCompanies: append([]string(nil), defaultPreferredCompanies...),
-		LastUpdated:        dateOnlyInSeoul(lastUpdated),
-		TodayDate:          dateOnlyInSeoul(c.now()),
-		MaxPages:           gamejob.DefaultMaxPages,
+		LastUpdated: dateOnlyInSeoul(lastUpdated),
+		TodayDate:   dateOnlyInSeoul(c.now()),
+		MaxPages:    gamejob.DefaultMaxPages,
 	}, nil
 }
 

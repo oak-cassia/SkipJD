@@ -25,7 +25,6 @@ func TestBuildCollectOptionsUsesLatestFinishedAt(t *testing.T) {
 	opts, err := crawler.buildCollectOptions(context.Background())
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"에피드게임즈"}, opts.PreferredCompanies)
 	assert.Equal(t, "2026-03-20", opts.LastUpdated.In(seoulLocation).Format(dateOnlyFormat))
 	assert.Equal(t, "2026-03-25", opts.TodayDate.In(seoulLocation).Format(dateOnlyFormat))
 	assert.Equal(t, gamejob.DefaultMaxPages, opts.MaxPages)
@@ -98,13 +97,7 @@ func (c *stubCollector) Scrape(_ context.Context, opts gamejob.ScrapeOptions) ([
 	return append([]gamejob.ScrapedPosting(nil), c.postings...), nil
 }
 
-func TestCanonicalCompanyNameStripsCorporateMarkers(t *testing.T) {
-	assert.Equal(t, "에피드게임즈", canonicalCompanyName("㈜에피드게임즈"))
-	assert.Equal(t, "드림모션", canonicalCompanyName("(주) 드림모션"))
-	assert.Equal(t, "웹젠", canonicalCompanyName("주식회사 웹젠"))
-}
-
-func TestToJobPostingsFiltersPreferredCompaniesAndDedupes(t *testing.T) {
+func TestToJobPostingsDedupesBySourceKey(t *testing.T) {
 	seenAt := time.Date(2026, 3, 25, 8, 0, 0, 0, time.UTC)
 	crawler := newTestCrawler(t, &stubCrawlRunRepository{}, noopCollect, nil, nil, nil)
 
@@ -127,15 +120,15 @@ func TestToJobPostingsFiltersPreferredCompaniesAndDedupes(t *testing.T) {
 		},
 		{
 			SourceKey:          "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275869",
-			Title:              "Skip me",
+			Title:              "Keep me",
 			Company:            "크니브스튜디오",
 			ClosingDate:        "채용시",
 			URL:                "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275869",
 			MinExperienceYears: 0,
 		},
-	}, []string{"에피드게임즈"}, seenAt)
+	}, seenAt)
 
-	require.Len(t, postings, 1)
+	require.Len(t, postings, 2)
 	assert.Equal(t, appName, postings[0].Source)
 	assert.Equal(t, "Server Engineer", postings[0].Title)
 	assert.Equal(t, "㈜에피드게임즈", postings[0].Company)
@@ -143,9 +136,13 @@ func TestToJobPostingsFiltersPreferredCompaniesAndDedupes(t *testing.T) {
 	assert.True(t, postings[0].LastSeenAt.Equal(seenAt))
 	require.NotNil(t, postings[0].MinExperienceYears)
 	assert.Equal(t, 3, *postings[0].MinExperienceYears)
+	assert.Equal(t, "Keep me", postings[1].Title)
+	assert.Equal(t, "크니브스튜디오", postings[1].Company)
+	require.NotNil(t, postings[1].MinExperienceYears)
+	assert.Equal(t, 0, *postings[1].MinExperienceYears)
 }
 
-func TestRunScrapesFiltersAndPersistsResults(t *testing.T) {
+func TestRunScrapesAndPersistsResults(t *testing.T) {
 	scrapedPostings := []gamejob.ScrapedPosting{
 		{
 			SourceKey:          "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868",
@@ -167,7 +164,7 @@ func TestRunScrapesFiltersAndPersistsResults(t *testing.T) {
 		},
 		{
 			SourceKey:          "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275869",
-			Title:              "Skip me",
+			Title:              "Keep me",
 			Company:            "크니브스튜디오",
 			ClosingDate:        "채용시",
 			URL:                "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275869",
@@ -199,8 +196,8 @@ func TestRunScrapesFiltersAndPersistsResults(t *testing.T) {
 	assert.False(t, collector.lastOpts.Stop(gamejob.ScrapedPosting{
 		ObservedDate: time.Date(2026, 3, 21, 0, 0, 0, 0, seoulLocation),
 	}))
-	assert.JSONEq(t, `{"postings":[{"title":"Server Engineer","company":"㈜에피드게임즈","url":"https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868","closing_date":"채용시","min_experience_years":3}]}`, out.String())
-	require.Len(t, repo.upsertedPostings, 1)
+	assert.JSONEq(t, `{"postings":[{"title":"Server Engineer","company":"㈜에피드게임즈","url":"https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868","closing_date":"채용시","min_experience_years":3},{"title":"Keep me","company":"크니브스튜디오","url":"https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275869","closing_date":"채용시","min_experience_years":0}]}`, out.String())
+	require.Len(t, repo.upsertedPostings, 2)
 	assert.Equal(t, appName, repo.upsertedPostings[0].Source)
 	assert.Equal(t, "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868", repo.upsertedPostings[0].SourceKey)
 	assert.Equal(t, "Server Engineer", repo.upsertedPostings[0].Title)
@@ -208,10 +205,15 @@ func TestRunScrapesFiltersAndPersistsResults(t *testing.T) {
 	assert.True(t, repo.upsertedPostings[0].FirstSeenAt.Equal(repo.upsertedPostings[0].LastSeenAt))
 	require.NotNil(t, repo.upsertedPostings[0].MinExperienceYears)
 	assert.Equal(t, 3, *repo.upsertedPostings[0].MinExperienceYears)
+	assert.Equal(t, "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275869", repo.upsertedPostings[1].SourceKey)
+	assert.Equal(t, "Keep me", repo.upsertedPostings[1].Title)
+	assert.Equal(t, "크니브스튜디오", repo.upsertedPostings[1].Company)
+	require.NotNil(t, repo.upsertedPostings[1].MinExperienceYears)
+	assert.Equal(t, 0, *repo.upsertedPostings[1].MinExperienceYears)
 	require.NotNil(t, repo.createdCrawlRun)
 	assert.Equal(t, appName, repo.createdCrawlRun.Source)
-	assert.Contains(t, progress.String(), "collect_options preferred_companies=에피드게임즈 last_updated=2026-03-21 today_date=2026-03-25 max_pages=10")
-	assert.Contains(t, progress.String(), "parsed_postings=1")
+	assert.Contains(t, progress.String(), "collect_options last_updated=2026-03-21 today_date=2026-03-25 max_pages=10")
+	assert.Contains(t, progress.String(), "parsed_postings=2")
 	assert.Contains(t, progress.String(), "crawler run persisted successfully")
 }
 
