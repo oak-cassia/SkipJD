@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -23,7 +24,7 @@ const (
 	SourceName       = "browser_agent"
 )
 
-var defaultDutyCodes = []string{"1", "3", "16"}
+var defaultDutyCodes = []int{1, 3, 16}
 
 var (
 	hoursAgoPattern   = regexp.MustCompile(`(\d+)\s*시간\s*전`)
@@ -38,6 +39,7 @@ type ScrapedPosting struct {
 	SourceKey          string    `json:"source_key"`
 	Title              string    `json:"title"`
 	Company            string    `json:"company"`
+	DutyCode           int       `json:"duty_code,omitempty"`
 	URL                string    `json:"url"`
 	ClosingDate        string    `json:"closing_date"`
 	MinExperienceYears int       `json:"min_experience_years"`
@@ -137,6 +139,7 @@ func (s *ClientScraper) Scrape(ctx context.Context, opts ScrapeOptions) ([]Scrap
 					SourceKey:          sourceKey,
 					Title:              row.title,
 					Company:            row.company,
+					DutyCode:           dutyCode,
 					ClosingDate:        row.closingDate,
 					URL:                row.url,
 					MinExperienceYears: parseMinExperienceYears(row.expText),
@@ -159,16 +162,17 @@ func (s *ClientScraper) Scrape(ctx context.Context, opts ScrapeOptions) ([]Scrap
 	return postings, nil
 }
 
-func (s *ClientScraper) fetchPage(ctx context.Context, dutyCode string, page int) (string, error) {
+func (s *ClientScraper) fetchPage(ctx context.Context, dutyCode int, page int) (string, error) {
+	dutyCodeValue := strconv.Itoa(dutyCode)
 	form := url.Values{}
 	form.Set("condition[dutyCtgr]", "0")
-	form.Set("condition[duty]", dutyCode)
+	form.Set("condition[duty]", dutyCodeValue)
 	form.Set("condition[reg_dt]", "0")
 	form.Set("condition[menucode]", "duty")
 	form.Set("condition[searchtype]", "B")
-	form.Add("condition[dutyArr][]", dutyCode)
-	form.Add("condition[dutyCtgrSelect][]", dutyCode)
-	form.Add("condition[dutySelect][]", dutyCode)
+	form.Add("condition[dutyArr][]", dutyCodeValue)
+	form.Add("condition[dutyCtgrSelect][]", dutyCodeValue)
+	form.Add("condition[dutySelect][]", dutyCodeValue)
 	form.Set("page", strconv.Itoa(page))
 	form.Set("direct", "0")
 	form.Set("order", "4")
@@ -367,6 +371,30 @@ func buildSourceKey(rawURL string) (string, error) {
 	return parsedURL.String(), nil
 }
 
+func NormalizeDutyCodes(codes []int) []int {
+	seen := make(map[int]struct{}, len(codes))
+	normalized := make([]int, 0, len(codes))
+
+	for _, code := range codes {
+		if _, exists := seen[code]; exists {
+			continue
+		}
+		seen[code] = struct{}{}
+		normalized = append(normalized, code)
+	}
+
+	sort.SliceStable(normalized, func(i, j int) bool {
+		leftPriority := defaultDutyCodePriority(normalized[i])
+		rightPriority := defaultDutyCodePriority(normalized[j])
+		if leftPriority != rightPriority {
+			return leftPriority < rightPriority
+		}
+		return normalized[i] < normalized[j]
+	})
+
+	return normalized
+}
+
 func normalizeSpace(value string) string {
 	return strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
 }
@@ -400,14 +428,23 @@ func (s *ClientScraper) origin() string {
 	return s.baseURL.Scheme + "://" + s.baseURL.Host
 }
 
-func (s *ClientScraper) refererURL(dutyCode string) string {
+func (s *ClientScraper) refererURL(dutyCode int) string {
 	return s.baseURL.ResolveReference(&url.URL{
 		Path: jobListPath,
 		RawQuery: url.Values{
 			"menucode": {"duty"},
-			"duty":     {dutyCode},
+			"duty":     {strconv.Itoa(dutyCode)},
 		}.Encode(),
 	}).String()
+}
+
+func defaultDutyCodePriority(code int) int {
+	for index, candidate := range defaultDutyCodes {
+		if candidate == code {
+			return index
+		}
+	}
+	return len(defaultDutyCodes)
 }
 
 func sameDate(left, right time.Time) bool {

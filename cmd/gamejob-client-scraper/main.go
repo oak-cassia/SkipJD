@@ -65,6 +65,7 @@ type outputPosting struct {
 	SourceKey          string `json:"source_key"`
 	Title              string `json:"title"`
 	Company            string `json:"company"`
+	DutyCodes          []int  `json:"duty_codes,omitempty"`
 	URL                string `json:"url"`
 	ClosingDate        string `json:"closing_date"`
 	MinExperienceYears int    `json:"min_experience_years"`
@@ -73,16 +74,24 @@ type outputPosting struct {
 
 func newOutput(postings []gamejob.ScrapedPosting, loc *time.Location) output {
 	items := make([]outputPosting, 0, len(postings))
+	itemIndexBySourceKey := make(map[string]int, len(postings))
 	for _, posting := range postings {
+		if index, exists := itemIndexBySourceKey[posting.SourceKey]; exists {
+			items[index].DutyCodes = gamejob.NormalizeDutyCodes(append(items[index].DutyCodes, posting.DutyCode))
+			continue
+		}
+
 		items = append(items, outputPosting{
 			SourceKey:          posting.SourceKey,
 			Title:              posting.Title,
 			Company:            posting.Company,
+			DutyCodes:          []int{posting.DutyCode},
 			URL:                posting.URL,
 			ClosingDate:        posting.ClosingDate,
 			MinExperienceYears: posting.MinExperienceYears,
 			ObservedDate:       posting.ObservedDate.In(loc).Format("2006-01-02"),
 		})
+		itemIndexBySourceKey[posting.SourceKey] = len(items) - 1
 	}
 
 	return output{Postings: items}

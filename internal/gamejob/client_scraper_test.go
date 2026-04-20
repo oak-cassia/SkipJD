@@ -70,6 +70,11 @@ func TestParseMinExperienceYears(t *testing.T) {
 	assert.Equal(t, 1, parseMinExperienceYears("경력 1-5년차"))
 }
 
+func TestNormalizeDutyCodesDeduplicatesAndOrdersCodes(t *testing.T) {
+	assert.Equal(t, []int{1, 3, 16}, NormalizeDutyCodes([]int{16, 1, 3, 1}))
+	assert.Equal(t, []int{3}, NormalizeDutyCodes([]int{3, 3}))
+}
+
 func TestScrapeStopsAtCutoffCallback(t *testing.T) {
 	var requestedTargets []string
 	client := &http.Client{
@@ -176,12 +181,17 @@ func TestScrapeStopsAtCutoffCallback(t *testing.T) {
 		postings[8].Title,
 	}))
 	assert.Equal(t, "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=1001", postings[0].SourceKey)
+	assert.Equal(t, 1, postings[0].DutyCode)
 	assert.Equal(t, "2026-04-07", postings[0].ObservedDate.Format("2006-01-02"))
 	assert.Equal(t, "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=2758681", postings[1].SourceKey)
+	assert.Equal(t, 1, postings[1].DutyCode)
 	assert.Equal(t, "상시", postings[1].ClosingDate)
 	assert.Equal(t, 3, postings[1].MinExperienceYears)
 	assert.Equal(t, "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=2758681", postings[1].URL)
 	assert.Equal(t, "2026-04-04", postings[2].ObservedDate.Format("2006-01-02"))
+	assert.Equal(t, 1, postings[2].DutyCode)
+	assert.Equal(t, 3, postings[3].DutyCode)
+	assert.Equal(t, 16, postings[6].DutyCode)
 }
 
 func TestScrapeStopsAtDefaultMaxPages(t *testing.T) {
@@ -221,6 +231,9 @@ func TestScrapeStopsAtDefaultMaxPages(t *testing.T) {
 	assert.Equal(t, "1:1", requestedTargets[0])
 	assert.Equal(t, "16:10", requestedTargets[len(requestedTargets)-1])
 	assert.Len(t, postings, len(defaultDutyCodes)*DefaultMaxPages)
+	assert.Equal(t, 1, postings[0].DutyCode)
+	assert.Equal(t, 3, postings[10].DutyCode)
+	assert.Equal(t, 16, postings[20].DutyCode)
 }
 
 func TestScrapeStopsOnEmptyPage(t *testing.T) {
@@ -274,6 +287,9 @@ func TestScrapeStopsWhenPaginationEnds(t *testing.T) {
 	assert.Equal(t, "Only page 1", postings[0].Title)
 	assert.Equal(t, "Only page 3", postings[1].Title)
 	assert.Equal(t, "Only page 16", postings[2].Title)
+	assert.Equal(t, 1, postings[0].DutyCode)
+	assert.Equal(t, 3, postings[1].DutyCode)
+	assert.Equal(t, 16, postings[2].DutyCode)
 }
 
 func TestScrapeWithoutStopContinuesPastOlderRows(t *testing.T) {
@@ -330,6 +346,9 @@ func TestScrapeWithoutStopContinuesPastOlderRows(t *testing.T) {
 	assert.Equal(t, "Second page 3", postings[3].Title)
 	assert.Equal(t, "Old but still collected 16", postings[4].Title)
 	assert.Equal(t, "Second page 16", postings[5].Title)
+	assert.Equal(t, 1, postings[0].DutyCode)
+	assert.Equal(t, 3, postings[2].DutyCode)
+	assert.Equal(t, 16, postings[4].DutyCode)
 }
 
 func TestParseObservedDateReturnsErrorForUnsupportedModifyText(t *testing.T) {
