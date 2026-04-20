@@ -7,7 +7,6 @@ import (
 	"os"
 	"time"
 
-	agentoutput "skipjd/internal/agent/output"
 	"skipjd/internal/gamejob"
 	"skipjd/internal/repository"
 )
@@ -94,7 +93,7 @@ func (c *Crawler) Run(ctx context.Context) error {
 
 	postings, dutyCodesBySourceKey := c.toJobPostings(scrapedPostings, startedAt)
 	finishedAt := c.now().Local()
-	outputText, err := agentoutput.Encode(postings, dutyCodesBySourceKey)
+	outputText, err := Encode(postings, dutyCodesBySourceKey)
 	if err != nil {
 		return fmt.Errorf("encode collected postings: %w", err)
 	}
