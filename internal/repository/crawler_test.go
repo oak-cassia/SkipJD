@@ -69,7 +69,11 @@ func TestUpsertJobPostingsUpdatesExistingPosting(t *testing.T) {
 			FirstSeenAt:        firstSeenAt,
 			LastSeenAt:         firstSeenAt,
 		},
+	}, map[string][]int{
+		"jobs/example/123": {1, 3},
 	}))
+
+	assertPostingDutyCodes(t, repo, "jobs/example/123", []int{1, 3})
 
 	require.NoError(t, repo.UpsertJobPostings(ctx, []model.JobPosting{
 		{
@@ -82,6 +86,8 @@ func TestUpsertJobPostingsUpdatesExistingPosting(t *testing.T) {
 			FirstSeenAt: lastSeenAt,
 			LastSeenAt:  lastSeenAt,
 		},
+	}, map[string][]int{
+		"jobs/example/123": {1},
 	}))
 
 	var posting model.JobPosting
@@ -92,6 +98,7 @@ func TestUpsertJobPostingsUpdatesExistingPosting(t *testing.T) {
 	assert.Nil(t, posting.MinExperienceYears)
 	assert.True(t, posting.FirstSeenAt.Equal(firstSeenAt))
 	assert.True(t, posting.LastSeenAt.Equal(lastSeenAt))
+	assertPostingDutyCodes(t, repo, "jobs/example/123", []int{1})
 }
 
 func TestGetExistingSourceKeysReturnsOnlyMatchedKeys(t *testing.T) {
@@ -130,6 +137,10 @@ func TestGetExistingSourceKeysReturnsOnlyMatchedKeys(t *testing.T) {
 			FirstSeenAt: seenAt,
 			LastSeenAt:  seenAt,
 		},
+	}, map[string][]int{
+		"jobs/example/1": {1},
+		"jobs/example/2": {3},
+		"jobs/example/3": {16},
 	}))
 
 	existing, err := repo.GetExistingSourceKeys(ctx, "browser_agent", []string{
@@ -152,7 +163,74 @@ func newCrawlerTestDB(t *testing.T) *gorm.DB {
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.CrawlRun{}, &model.JobPosting{}))
+	require.NoError(t, db.AutoMigrate(&model.CrawlRun{}, &model.JobPosting{}, &model.JobPostingDuty{}))
 
 	return db
+}
+
+func TestListJobPostingsByDutyCodesReturnsAnyMatchedPostingsInRecencyOrder(t *testing.T) {
+	repo := NewCrawlerRepository(newCrawlerTestDB(t))
+	ctx := context.Background()
+	baseTime := time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC)
+
+	require.NoError(t, repo.UpsertJobPostings(ctx, []model.JobPosting{
+		{
+			Source:      "browser_agent",
+			SourceKey:   "jobs/example/1",
+			Title:       "Posting 1",
+			Company:     "A",
+			URL:         "https://jobs.example.com/postings/1",
+			ClosingDate: "채용시",
+			FirstSeenAt: baseTime,
+			LastSeenAt:  baseTime.Add(1 * time.Hour),
+		},
+		{
+			Source:      "browser_agent",
+			SourceKey:   "jobs/example/2",
+			Title:       "Posting 2",
+			Company:     "B",
+			URL:         "https://jobs.example.com/postings/2",
+			ClosingDate: "채용시",
+			FirstSeenAt: baseTime,
+			LastSeenAt:  baseTime.Add(3 * time.Hour),
+		},
+		{
+			Source:      "browser_agent",
+			SourceKey:   "jobs/example/3",
+			Title:       "Posting 3",
+			Company:     "C",
+			URL:         "https://jobs.example.com/postings/3",
+			ClosingDate: "채용시",
+			FirstSeenAt: baseTime,
+			LastSeenAt:  baseTime.Add(2 * time.Hour),
+		},
+	}, map[string][]int{
+		"jobs/example/1": {1},
+		"jobs/example/2": {3, 16},
+		"jobs/example/3": {16},
+	}))
+
+	postings, err := repo.ListJobPostingsByDutyCodes(ctx, "browser_agent", []int{16, 99})
+	require.NoError(t, err)
+	require.Len(t, postings, 2)
+	assert.Equal(t, []string{"jobs/example/2", "jobs/example/3"}, []string{postings[0].SourceKey, postings[1].SourceKey})
+}
+
+func assertPostingDutyCodes(t *testing.T, repo *CrawlerRepository, sourceKey string, want []int) {
+	t.Helper()
+
+	var posting model.JobPosting
+	require.NoError(t, repo.db.Where("source_key = ?", sourceKey).First(&posting).Error)
+
+	var duties []model.JobPostingDuty
+	require.NoError(t, repo.db.
+		Where("job_posting_id = ?", posting.ID).
+		Order("duty_code ASC").
+		Find(&duties).Error)
+
+	got := make([]int, 0, len(duties))
+	for _, duty := range duties {
+		got = append(got, duty.DutyCode)
+	}
+	assert.Equal(t, want, got)
 }

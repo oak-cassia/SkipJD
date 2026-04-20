@@ -63,6 +63,7 @@ type stubCrawlRunRepository struct {
 	latestFinishedAt *time.Time
 	lastSource       string
 	upsertedPostings []model.JobPosting
+	upsertedDuties   map[string][]int
 	createdCrawlRun  *model.CrawlRun
 }
 
@@ -79,9 +80,10 @@ func (r *stubCrawlRunRepository) GetLatestFinishedAtBySource(ctx context.Context
 	return r.latestFinishedAt, nil
 }
 
-func (r *stubCrawlRunRepository) UpsertJobPostings(ctx context.Context, postings []model.JobPosting) error {
+func (r *stubCrawlRunRepository) UpsertJobPostings(ctx context.Context, postings []model.JobPosting, dutyCodesBySourceKey map[string][]int) error {
 	_ = ctx
 	r.upsertedPostings = append([]model.JobPosting(nil), postings...)
+	r.upsertedDuties = cloneDutyCodesBySourceKey(dutyCodesBySourceKey)
 	return nil
 }
 
@@ -101,11 +103,12 @@ func TestToJobPostingsDedupesBySourceKey(t *testing.T) {
 	seenAt := time.Date(2026, 3, 25, 8, 0, 0, 0, time.UTC)
 	crawler := newTestCrawler(t, &stubCrawlRunRepository{}, noopCollect, nil, nil, nil)
 
-	postings := crawler.toJobPostings([]gamejob.ScrapedPosting{
+	postings, dutyCodesBySourceKey := crawler.toJobPostings([]gamejob.ScrapedPosting{
 		{
 			SourceKey:          "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868",
 			Title:              "Server Engineer",
 			Company:            "㈜에피드게임즈",
+			DutyCode:           1,
 			ClosingDate:        "채용시",
 			URL:                "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868",
 			MinExperienceYears: 3,
@@ -114,6 +117,7 @@ func TestToJobPostingsDedupesBySourceKey(t *testing.T) {
 			SourceKey:          "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868",
 			Title:              "Duplicate",
 			Company:            "에피드게임즈",
+			DutyCode:           3,
 			ClosingDate:        "채용시",
 			URL:                "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868",
 			MinExperienceYears: 1,
@@ -122,6 +126,7 @@ func TestToJobPostingsDedupesBySourceKey(t *testing.T) {
 			SourceKey:          "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275869",
 			Title:              "Keep me",
 			Company:            "크니브스튜디오",
+			DutyCode:           16,
 			ClosingDate:        "채용시",
 			URL:                "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275869",
 			MinExperienceYears: 0,
@@ -140,6 +145,10 @@ func TestToJobPostingsDedupesBySourceKey(t *testing.T) {
 	assert.Equal(t, "크니브스튜디오", postings[1].Company)
 	require.NotNil(t, postings[1].MinExperienceYears)
 	assert.Equal(t, 0, *postings[1].MinExperienceYears)
+	assert.Equal(t, map[string][]int{
+		"https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868": {1, 3},
+		"https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275869": {16},
+	}, dutyCodesBySourceKey)
 }
 
 func TestRunScrapesAndPersistsResults(t *testing.T) {
@@ -148,6 +157,7 @@ func TestRunScrapesAndPersistsResults(t *testing.T) {
 			SourceKey:          "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868",
 			Title:              "Server Engineer",
 			Company:            "㈜에피드게임즈",
+			DutyCode:           1,
 			ClosingDate:        "채용시",
 			URL:                "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868",
 			MinExperienceYears: 3,
@@ -157,6 +167,7 @@ func TestRunScrapesAndPersistsResults(t *testing.T) {
 			SourceKey:          "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868",
 			Title:              "Duplicate",
 			Company:            "에피드게임즈",
+			DutyCode:           3,
 			ClosingDate:        "채용시",
 			URL:                "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868",
 			MinExperienceYears: 1,
@@ -166,6 +177,7 @@ func TestRunScrapesAndPersistsResults(t *testing.T) {
 			SourceKey:          "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275869",
 			Title:              "Keep me",
 			Company:            "크니브스튜디오",
+			DutyCode:           16,
 			ClosingDate:        "채용시",
 			URL:                "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275869",
 			MinExperienceYears: 0,
@@ -196,7 +208,7 @@ func TestRunScrapesAndPersistsResults(t *testing.T) {
 	assert.False(t, collector.lastOpts.Stop(gamejob.ScrapedPosting{
 		ObservedDate: time.Date(2026, 3, 21, 0, 0, 0, 0, seoulLocation),
 	}))
-	assert.JSONEq(t, `{"postings":[{"title":"Server Engineer","company":"㈜에피드게임즈","url":"https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868","closing_date":"채용시","min_experience_years":3},{"title":"Keep me","company":"크니브스튜디오","url":"https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275869","closing_date":"채용시","min_experience_years":0}]}`, out.String())
+	assert.JSONEq(t, `{"postings":[{"title":"Server Engineer","company":"㈜에피드게임즈","duty_codes":[1,3],"url":"https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868","closing_date":"채용시","min_experience_years":3},{"title":"Keep me","company":"크니브스튜디오","duty_codes":[16],"url":"https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275869","closing_date":"채용시","min_experience_years":0}]}`, out.String())
 	require.Len(t, repo.upsertedPostings, 2)
 	assert.Equal(t, appName, repo.upsertedPostings[0].Source)
 	assert.Equal(t, "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868", repo.upsertedPostings[0].SourceKey)
@@ -210,6 +222,10 @@ func TestRunScrapesAndPersistsResults(t *testing.T) {
 	assert.Equal(t, "크니브스튜디오", repo.upsertedPostings[1].Company)
 	require.NotNil(t, repo.upsertedPostings[1].MinExperienceYears)
 	assert.Equal(t, 0, *repo.upsertedPostings[1].MinExperienceYears)
+	assert.Equal(t, map[string][]int{
+		"https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868": {1, 3},
+		"https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275869": {16},
+	}, repo.upsertedDuties)
 	require.NotNil(t, repo.createdCrawlRun)
 	assert.Equal(t, appName, repo.createdCrawlRun.Source)
 	assert.Contains(t, progress.String(), "collect_options last_updated=2026-03-21 today_date=2026-03-25 max_pages=10")
@@ -232,10 +248,13 @@ func TestPersistCrawlResultsStoresPostingsAndCreatesRun(t *testing.T) {
 	repo := &stubCrawlRunRepository{}
 	crawler := newTestCrawler(t, repo, noopCollect, nil, nil, nil)
 
-	err := crawler.persistCrawlResults(context.Background(), postings, now.Add(-5*time.Minute), now)
+	err := crawler.persistCrawlResults(context.Background(), postings, map[string][]int{
+		"jobs/example/1": {3},
+	}, now.Add(-5*time.Minute), now)
 	require.NoError(t, err)
 
 	require.Len(t, repo.upsertedPostings, 1)
+	assert.Equal(t, map[string][]int{"jobs/example/1": {3}}, repo.upsertedDuties)
 	require.NotNil(t, repo.createdCrawlRun)
 	assert.Equal(t, postings, repo.upsertedPostings)
 }
@@ -262,4 +281,19 @@ func newTestCrawler(
 
 func noopCollect(_ context.Context, _ gamejob.ScrapeOptions) ([]gamejob.ScrapedPosting, error) {
 	return nil, nil
+}
+
+func cloneDutyCodesBySourceKey(values map[string][]int) map[string][]int {
+	if len(values) == 0 {
+		return nil
+	}
+
+	cloned := make(map[string][]int, len(values))
+	for sourceKey, dutyCodes := range values {
+		copied := make([]int, len(dutyCodes))
+		copy(copied, dutyCodes)
+		cloned[sourceKey] = copied
+	}
+
+	return cloned
 }

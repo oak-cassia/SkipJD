@@ -92,16 +92,16 @@ func (c *Crawler) Run(ctx context.Context) error {
 		return fmt.Errorf("scrape postings: %w", err)
 	}
 
-	postings := c.toJobPostings(scrapedPostings, startedAt)
+	postings, dutyCodesBySourceKey := c.toJobPostings(scrapedPostings, startedAt)
 	finishedAt := c.now().Local()
-	outputText, err := agentoutput.Encode(postings)
+	outputText, err := agentoutput.Encode(postings, dutyCodesBySourceKey)
 	if err != nil {
 		return fmt.Errorf("encode collected postings: %w", err)
 	}
 	if _, err := fmt.Fprintf(c.progressWriter(), "parsed_postings=%d\n", len(postings)); err != nil {
 		return fmt.Errorf("write progress output: %w", err)
 	}
-	if err := c.persistCrawlResults(ctx, postings, startedAt, finishedAt); err != nil {
+	if err := c.persistCrawlResults(ctx, postings, dutyCodesBySourceKey, startedAt, finishedAt); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintln(c.progressWriter(), "crawler run persisted successfully"); err != nil {

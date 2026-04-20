@@ -10,12 +10,17 @@ import (
 func (c *Crawler) toJobPostings(
 	scrapedPostings []gamejob.ScrapedPosting,
 	seenAt time.Time,
-) []model.JobPosting {
+) ([]model.JobPosting, map[string][]int) {
 	postings := make([]model.JobPosting, 0, len(scrapedPostings))
-	seenSourceKeys := make(map[string]struct{}, len(scrapedPostings))
+	postingIndexBySourceKey := make(map[string]int, len(scrapedPostings))
+	dutyCodesBySourceKey := make(map[string][]int, len(scrapedPostings))
 
 	for _, scrapedPosting := range scrapedPostings {
-		if _, exists := seenSourceKeys[scrapedPosting.SourceKey]; exists {
+		dutyCodesBySourceKey[scrapedPosting.SourceKey] = gamejob.NormalizeDutyCodes(
+			append(dutyCodesBySourceKey[scrapedPosting.SourceKey], scrapedPosting.DutyCode),
+		)
+		if index, exists := postingIndexBySourceKey[scrapedPosting.SourceKey]; exists {
+			postings[index].LastSeenAt = seenAt
 			continue
 		}
 
@@ -30,10 +35,10 @@ func (c *Crawler) toJobPostings(
 			FirstSeenAt:        seenAt,
 			LastSeenAt:         seenAt,
 		})
-		seenSourceKeys[scrapedPosting.SourceKey] = struct{}{}
+		postingIndexBySourceKey[scrapedPosting.SourceKey] = len(postings) - 1
 	}
 
-	return postings
+	return postings, dutyCodesBySourceKey
 }
 
 func intPtr(value int) *int {
