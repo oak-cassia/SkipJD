@@ -22,17 +22,19 @@ func TestEncodeProducesCrawlerJSONShape(t *testing.T) {
 		ClosingDate:        "채용시",
 		URL:                "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868",
 		MinExperienceYears: &minYears,
-	}})
+	}}, map[string][]int{
+		"https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868": {1, 3},
+	})
 	require.NoError(t, err)
 
-	assert.JSONEq(t, `{"postings":[{"title":"Server Engineer","company":"에피드게임즈","url":"https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868","closing_date":"채용시","min_experience_years":3}]}`, outputText)
+	assert.JSONEq(t, `{"postings":[{"title":"Server Engineer","company":"에피드게임즈","duty_codes":[1,3],"url":"https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868","closing_date":"채용시","min_experience_years":3}]}`, outputText)
 }
 
 func TestParseBuildsJobPostingModels(t *testing.T) {
 	seenAt := time.Date(2026, 3, 25, 9, 0, 0, 0, time.UTC)
-	outputText := `{"postings":[{"title":"Backend Engineer","company":"Krafton","url":"https://jobs.example.com/postings/123#details","closing_date":"채용 시 마감","min_experience_years":3},{"title":"AI Engineer","company":"Krafton","url":"https://jobs.example.com/postings/456","closing_date":"2026-04-01"}]}`
+	outputText := `{"postings":[{"title":"Backend Engineer","company":"Krafton","duty_codes":[16],"url":"https://jobs.example.com/postings/123#details","closing_date":"채용 시 마감","min_experience_years":3},{"title":"AI Engineer","company":"Krafton","url":"https://jobs.example.com/postings/456","closing_date":"2026-04-01"}]}`
 
-	postings, err := Parse(outputText, seenAt)
+	postings, dutyCodesBySourceKey, err := Parse(outputText, seenAt)
 	require.NoError(t, err)
 	require.Len(t, postings, 2)
 
@@ -49,27 +51,30 @@ func TestParseBuildsJobPostingModels(t *testing.T) {
 
 	assert.Equal(t, "https://jobs.example.com/postings/456", postings[1].SourceKey)
 	assert.Nil(t, postings[1].MinExperienceYears)
+	assert.Equal(t, map[string][]int{
+		"https://jobs.example.com/postings/123": {16},
+	}, dutyCodesBySourceKey)
 }
 
 func TestParseRejectsMissingRequiredFields(t *testing.T) {
-	_, err := Parse(`{"postings":[{"company":"Krafton","url":"https://jobs.example.com/postings/123","closing_date":"채용 시 마감"}]}`, time.Now())
+	_, _, err := Parse(`{"postings":[{"company":"Krafton","url":"https://jobs.example.com/postings/123","closing_date":"채용 시 마감"}]}`, time.Now())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "title is required")
 }
 
 func TestParseAcceptsGameJobDetailURL(t *testing.T) {
-	_, err := Parse(`{"postings":[{"title":"[NineB/Project PX] Server Programmer (5년 이상)","company":"Krafton","url":"https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=274647","closing_date":"채용시","min_experience_years":5}]}`, time.Now())
+	_, _, err := Parse(`{"postings":[{"title":"[NineB/Project PX] Server Programmer (5년 이상)","company":"Krafton","url":"https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=274647","closing_date":"채용시","min_experience_years":5}]}`, time.Now())
 	require.NoError(t, err)
 }
 
 func TestParseRejectsGameJobListingURL(t *testing.T) {
-	_, err := Parse(`{"postings":[{"title":"[Palworld Mobile] Engine Eng...","company":"Krafton","url":"https://www.gamejob.co.kr/Recruit/joblist?menucode=duty&duty=1","closing_date":"채용시","min_experience_years":0}]}`, time.Now())
+	_, _, err := Parse(`{"postings":[{"title":"[Palworld Mobile] Engine Eng...","company":"Krafton","url":"https://www.gamejob.co.kr/Recruit/joblist?menucode=duty&duty=1","closing_date":"채용시","min_experience_years":0}]}`, time.Now())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "GameJob detail page")
 }
 
 func TestParseRejectsTruncatedGameJobTitle(t *testing.T) {
-	_, err := Parse(`{"postings":[{"title":"[Palworld Mobile] Engine Eng...","company":"Krafton","url":"https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=277887","closing_date":"채용시","min_experience_years":0}]}`, time.Now())
+	_, _, err := Parse(`{"postings":[{"title":"[Palworld Mobile] Engine Eng...","company":"Krafton","url":"https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=277887","closing_date":"채용시","min_experience_years":0}]}`, time.Now())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "title appears truncated")
 }

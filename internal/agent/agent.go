@@ -51,6 +51,12 @@ func NewBrowserAgent(cfg Config, modelInstance model.LLM) (adkagent.Agent, error
 							"company": {
 								Type: "string",
 							},
+							"duty_codes": {
+								Type: "array",
+								Items: &genai.Schema{
+									Type: "integer",
+								},
+							},
 							"url": {
 								Type: "string",
 							},

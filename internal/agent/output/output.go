@@ -21,12 +21,13 @@ type Output struct {
 type Posting struct {
 	Title              string `json:"title"`
 	Company            string `json:"company"`
+	DutyCodes          []int  `json:"duty_codes,omitempty"`
 	URL                string `json:"url"`
 	ClosingDate        string `json:"closing_date"`
 	MinExperienceYears *int   `json:"min_experience_years"`
 }
 
-func Encode(postings []model.JobPosting) (string, error) {
+func Encode(postings []model.JobPosting, dutyCodesBySourceKey map[string][]int) (string, error) {
 	output := Output{
 		Postings: make([]Posting, 0, len(postings)),
 	}
@@ -35,6 +36,7 @@ func Encode(postings []model.JobPosting) (string, error) {
 		output.Postings = append(output.Postings, Posting{
 			Title:              posting.Title,
 			Company:            posting.Company,
+			DutyCodes:          cloneDutyCodes(dutyCodesBySourceKey[posting.SourceKey]),
 			URL:                posting.URL,
 			ClosingDate:        posting.ClosingDate,
 			MinExperienceYears: cloneMinExperienceYears(posting.MinExperienceYears),
@@ -51,13 +53,14 @@ func Encode(postings []model.JobPosting) (string, error) {
 	return buf.String(), nil
 }
 
-func Parse(outputText string, seenAt time.Time) ([]model.JobPosting, error) {
+func Parse(outputText string, seenAt time.Time) ([]model.JobPosting, map[string][]int, error) {
 	var output Output
 	if err := json.Unmarshal([]byte(outputText), &output); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	postings := make([]model.JobPosting, 0, len(output.Postings))
+	dutyCodesBySourceKey := make(map[string][]int, len(output.Postings))
 	for i, posting := range output.Postings {
 		title := strings.TrimSpace(posting.Title)
 		company := strings.TrimSpace(posting.Company)
@@ -65,33 +68,40 @@ func Parse(outputText string, seenAt time.Time) ([]model.JobPosting, error) {
 		closingDate := strings.TrimSpace(posting.ClosingDate)
 
 		if title == "" {
-			return nil, fmt.Errorf("posting %d: title is required", i)
+			return nil, nil, fmt.Errorf("posting %d: title is required", i)
 		}
 		if company == "" {
-			return nil, fmt.Errorf("posting %d: company is required", i)
+			return nil, nil, fmt.Errorf("posting %d: company is required", i)
 		}
 		if postingURL == "" {
-			return nil, fmt.Errorf("posting %d: url is required", i)
+			return nil, nil, fmt.Errorf("posting %d: url is required", i)
 		}
 		if closingDate == "" {
-			return nil, fmt.Errorf("posting %d: closing_date is required", i)
+			return nil, nil, fmt.Errorf("posting %d: closing_date is required", i)
 		}
 		if err := validatePosting(title, postingURL); err != nil {
-			return nil, fmt.Errorf("posting %d: %w", i, err)
+			return nil, nil, fmt.Errorf("posting %d: %w", i, err)
 		}
 
 		sourceKey, err := buildSourceKey(postingURL)
 		if err != nil {
-			return nil, fmt.Errorf("posting %d: %w", i, err)
+			return nil, nil, fmt.Errorf("posting %d: %w", i, err)
 		}
 
 		var minExperienceYears *int
 		if posting.MinExperienceYears != nil {
 			if *posting.MinExperienceYears < 0 {
-				return nil, fmt.Errorf("posting %d: min_experience_years must be non-negative", i)
+				return nil, nil, fmt.Errorf("posting %d: min_experience_years must be non-negative", i)
 			}
 			minExperienceYears = new(int)
 			*minExperienceYears = *posting.MinExperienceYears
+		}
+		normalizedDutyCodes, err := normalizeDutyCodes(posting.DutyCodes)
+		if err != nil {
+			return nil, nil, fmt.Errorf("posting %d: %w", i, err)
+		}
+		if len(normalizedDutyCodes) > 0 {
+			dutyCodesBySourceKey[sourceKey] = normalizedDutyCodes
 		}
 
 		postings = append(postings, model.JobPosting{
@@ -107,7 +117,7 @@ func Parse(outputText string, seenAt time.Time) ([]model.JobPosting, error) {
 		})
 	}
 
-	return postings, nil
+	return postings, dutyCodesBySourceKey, nil
 }
 
 func cloneMinExperienceYears(value *int) *int {
@@ -117,6 +127,32 @@ func cloneMinExperienceYears(value *int) *int {
 
 	copied := *value
 	return &copied
+}
+
+func cloneDutyCodes(values []int) []int {
+	if len(values) == 0 {
+		return nil
+	}
+
+	cloned := make([]int, len(values))
+	copy(cloned, values)
+	return cloned
+}
+
+func normalizeDutyCodes(values []int) ([]int, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+
+	normalized := make([]int, 0, len(values))
+	for _, value := range values {
+		if value <= 0 {
+			return nil, fmt.Errorf("duty_codes must contain positive integers")
+		}
+		normalized = append(normalized, value)
+	}
+
+	return gamejob.NormalizeDutyCodes(normalized), nil
 }
 
 func validatePosting(title, rawURL string) error {
