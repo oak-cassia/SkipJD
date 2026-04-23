@@ -27,7 +27,7 @@ func TestParseListPageExtractsRowsAndPagination(t *testing.T) {
 	require.Len(t, page.rows, 2)
 
 	assert.True(t, page.hasNext)
-	assert.Equal(t, "㈜드림모션", page.rows[0].company)
+	assert.Equal(t, "드림모션", page.rows[0].company)
 	assert.Equal(t, "[PC 신작 프로젝트] 프로그래머 인재 채용 (신입/경력)", page.rows[0].title)
 	assert.Equal(t, "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=278544", page.rows[0].url)
 	assert.Equal(t, "신입", page.rows[0].expText)
@@ -68,6 +68,37 @@ func TestParseMinExperienceYears(t *testing.T) {
 	assert.Equal(t, 0, parseMinExperienceYears("경력무관"))
 	assert.Equal(t, 3, parseMinExperienceYears("경력3년↑"))
 	assert.Equal(t, 1, parseMinExperienceYears("경력 1-5년차"))
+}
+
+func TestNormalizeCompanyName(t *testing.T) {
+	cases := []struct {
+		input    string
+		expected string
+	}{
+		// 법인격 접두사
+		{"㈜넵튠", "넵튠"},
+		{"(주)웹젠", "웹젠"},
+		{"주식회사 컴투스", "컴투스"},
+		{"주식회사인포바인", "인포바인"},
+		{"㈔한국인공지능게임협", "한국인공지능게임협"},
+		// 법인격 접미사
+		{"팀스파르타㈜", "팀스파르타"},
+		{"라인게임즈㈜", "라인게임즈"},
+		{"111퍼센트㈜", "111퍼센트"},
+		// 후미 괄호 부가정보 + 접미사
+		{"옴니크래프트랩스㈜(크래프톤 계열회사)", "옴니크래프트랩스"},
+		// 후미 괄호 부가정보만
+		{"EA코리아 (Electronic Arts Korea)", "EA코리아"},
+		// 변환 없음
+		{"스마일게이트", "스마일게이트"},
+		{"NC", "NC"},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.input, func(t *testing.T) {
+			assert.Equal(t, tc.expected, NormalizeCompanyName(tc.input))
+		})
+	}
 }
 
 func TestNormalizeDutyCodesDeduplicatesAndOrdersCodes(t *testing.T) {

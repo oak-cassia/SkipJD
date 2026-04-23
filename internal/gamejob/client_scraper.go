@@ -27,12 +27,16 @@ const (
 var defaultDutyCodes = []int{1, 3, 16}
 
 var (
-	hoursAgoPattern   = regexp.MustCompile(`(\d+)\s*시간\s*전`)
-	minutesAgoPattern = regexp.MustCompile(`(\d+)\s*분\s*전`)
-	daysAgoPattern    = regexp.MustCompile(`(\d+)\s*일\s*전`)
-	monthDayPattern   = regexp.MustCompile(`(\d{2})/(\d{2})`)
-	yearRangePattern  = regexp.MustCompile(`(\d+)\s*[-~]\s*\d+\s*년`)
-	yearsPattern      = regexp.MustCompile(`(\d+)\s*년`)
+	hoursAgoPattern           = regexp.MustCompile(`(\d+)\s*시간\s*전`)
+	minutesAgoPattern         = regexp.MustCompile(`(\d+)\s*분\s*전`)
+	daysAgoPattern            = regexp.MustCompile(`(\d+)\s*일\s*전`)
+	monthDayPattern           = regexp.MustCompile(`(\d{2})/(\d{2})`)
+	yearRangePattern          = regexp.MustCompile(`(\d+)\s*[-~]\s*\d+\s*년`)
+	yearsPattern              = regexp.MustCompile(`(\d+)\s*년`)
+	companyParenSuffixPattern = regexp.MustCompile(`\s*\([^)]*\)\s*$`)
+
+	legalEntitySuffixes = []string{"㈜", "(주)", "㈔"}
+	legalEntityPrefixes = []string{"주식회사 ", "주식회사", "(주)", "㈜", "㈔"}
 )
 
 type ScrapedPosting struct {
@@ -195,7 +199,9 @@ func (s *ClientScraper) fetchPage(ctx context.Context, dutyCode int, page int) (
 	if err != nil {
 		return "", fmt.Errorf("fetch page %d: %w", page, err)
 	}
-	defer resp.Body.Close()
+	defer func(Body io.ReadCloser) {
+		_ = Body.Close()
+	}(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("fetch page %d: unexpected status %s", page, resp.Status)
@@ -252,10 +258,11 @@ func (s *ClientScraper) parseListPage(htmlText string, currentPage int) (listPag
 		companyNode := findFirst(tds[0], func(node *html.Node) bool {
 			return isElement(node, "strong")
 		})
-		company := normalizeSpace(textContent(companyNode))
-		if company == "" {
-			company = normalizeSpace(textContent(tds[0]))
+		rawCompany := normalizeSpace(textContent(companyNode))
+		if rawCompany == "" {
+			rawCompany = normalizeSpace(textContent(tds[0]))
 		}
+		company := NormalizeCompanyName(rawCompany)
 
 		expNode := findFirst(tds[1], func(node *html.Node) bool {
 			return isElement(node, "span") && hasAncestor(node, func(ancestor *html.Node) bool {
@@ -397,6 +404,39 @@ func NormalizeDutyCodes(codes []int) []int {
 
 func normalizeSpace(value string) string {
 	return strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+}
+
+// NormalizeCompanyName strips legal entity markers and trailing parenthetical
+// annotations from a raw company name (e.g. "㈜넵튠" → "넵튠",
+// "옴니크래프트랩스㈜(크래프톤 계열회사)" → "옴니크래프트랩스").
+func NormalizeCompanyName(name string) string {
+	s := strings.TrimSpace(name)
+	if s == "" {
+		return s
+	}
+
+	// 1. 후미 괄호 부가정보 제거: "옴니크래프트랩스㈜(크래프톤 계열회사)" → "옴니크래프트랩스㈜"
+	//                            "EA코리아 (Electronic Arts Korea)"     → "EA코리아"
+	s = companyParenSuffixPattern.ReplaceAllString(s, "")
+
+	// 2. 법인격 접미사 제거: "팀스파르타㈜" → "팀스파르타", "라인게임즈㈜" → "라인게임즈"
+	for _, suf := range legalEntitySuffixes {
+		if strings.HasSuffix(s, suf) {
+			s = strings.TrimSpace(s[:len(s)-len(suf)])
+			break
+		}
+	}
+
+	// 3. 법인격 접두사 제거: "㈜넵튠" → "넵튠", "주식회사 컴투스" → "컴투스"
+	//    "주식회사 " (공백 포함)을 먼저 검사해야 "주식회사인포바인" 오작동 방지
+	for _, pre := range legalEntityPrefixes {
+		if strings.HasPrefix(s, pre) {
+			s = strings.TrimSpace(s[len(pre):])
+			break
+		}
+	}
+
+	return s
 }
 
 func (s *ClientScraper) normalizeDate(value time.Time) time.Time {
