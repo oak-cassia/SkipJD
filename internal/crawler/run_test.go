@@ -273,7 +273,18 @@ func newTestCrawler(
 ) *Crawler {
 	t.Helper()
 
-	crawler, err := newCrawler(out, progressOut, repo, collect, now)
+	var opts []Option
+	if out != nil {
+		opts = append(opts, WithOutput(out))
+	}
+	if progressOut != nil {
+		opts = append(opts, WithProgressOutput(progressOut))
+	}
+	if now != nil {
+		opts = append(opts, WithNowFunc(now))
+	}
+
+	crawler, err := newCrawler(repo, collect, opts...)
 	require.NoError(t, err)
 
 	return crawler

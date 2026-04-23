@@ -12,8 +12,6 @@ import (
 	"skipjd/internal/model"
 )
 
-const CollectedPostingsKey = "collected_postings"
-
 type Output struct {
 	Postings []Posting `json:"postings"`
 }
@@ -125,8 +123,7 @@ func cloneMinExperienceYears(value *int) *int {
 		return nil
 	}
 
-	copied := *value
-	return &copied
+	return new(*value)
 }
 
 func cloneDutyCodes(values []int) []int {

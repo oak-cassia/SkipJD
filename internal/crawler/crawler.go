@@ -24,12 +24,36 @@ type Crawler struct {
 	now               func() time.Time
 }
 
+type Option func(*Crawler)
+
+func WithOutput(out io.Writer) Option {
+	return func(c *Crawler) {
+		if out != nil {
+			c.out = out
+		}
+	}
+}
+
+func WithProgressOutput(progressOut io.Writer) Option {
+	return func(c *Crawler) {
+		if progressOut != nil {
+			c.progressOut = progressOut
+		}
+	}
+}
+
+func WithNowFunc(now func() time.Time) Option {
+	return func(c *Crawler) {
+		if now != nil {
+			c.now = now
+		}
+	}
+}
+
 func newCrawler(
-	out io.Writer,
-	progressOut io.Writer,
 	crawlerRepository crawlRunRepository,
 	collect collectFunc,
-	now func() time.Time,
+	opts ...Option,
 ) (*Crawler, error) {
 	if crawlerRepository == nil {
 		return nil, fmt.Errorf("crawler repository is required")
@@ -38,29 +62,25 @@ func newCrawler(
 		return nil, fmt.Errorf("crawler collector is required")
 	}
 
-	if out == nil {
-		out = io.Discard
-	}
-	if progressOut == nil {
-		progressOut = io.Discard
-	}
-	if now == nil {
-		now = time.Now
-	}
-
-	return &Crawler{
-		out:               out,
-		progressOut:       progressOut,
+	c := &Crawler{
+		out:               io.Discard,
+		progressOut:       io.Discard,
 		crawlerRepository: crawlerRepository,
 		collect:           collect,
-		now:               now,
-	}, nil
+		now:               time.Now,
+	}
+
+	for _, opt := range opts {
+		opt(c)
+	}
+
+	return c, nil
 }
 
 func NewCrawler(out io.Writer, crawlerRepository *repository.CrawlerRepository) (*Crawler, error) {
 	scraper := gamejob.NewClientScraper(nil)
 
-	return newCrawler(out, nil, crawlerRepository, scraper.Scrape, nil)
+	return newCrawler(crawlerRepository, scraper.Scrape, WithOutput(out))
 }
 
 func (c *Crawler) Run(ctx context.Context) error {
@@ -116,7 +136,7 @@ func (c *Crawler) Run(ctx context.Context) error {
 
 func Run(ctx context.Context, crawlerRepository *repository.CrawlerRepository) error {
 	scraper := gamejob.NewClientScraper(nil)
-	crawler, err := newCrawler(os.Stdout, os.Stderr, crawlerRepository, scraper.Scrape, nil)
+	crawler, err := newCrawler(crawlerRepository, scraper.Scrape, WithOutput(os.Stdout), WithProgressOutput(os.Stderr))
 	if err != nil {
 		return err
 	}
