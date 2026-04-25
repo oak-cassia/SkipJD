@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	appName             = gamejob.SourceName
+	appName           = gamejob.SourceName
 	detailWorkerCount = 5
 )
 
@@ -193,7 +193,6 @@ func (c *Crawler) enrichWithDetail(ctx context.Context, postings []model.JobPost
 	var wg sync.WaitGroup
 
 	for _, posting := range postings {
-		posting := posting
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
