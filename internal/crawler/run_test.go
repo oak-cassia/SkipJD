@@ -65,6 +65,9 @@ type stubCrawlRunRepository struct {
 	upsertedPostings []model.JobPosting
 	upsertedDuties   map[string][]int
 	createdCrawlRun  *model.CrawlRun
+	idsBySourceKey   map[string]uint
+	upsertedBodies   map[uint]string
+	replacedImages   map[uint][]string
 }
 
 func (r *stubCrawlRunRepository) CreateCrawlRun(ctx context.Context, crawlRun *model.CrawlRun) error {
@@ -84,6 +87,36 @@ func (r *stubCrawlRunRepository) UpsertJobPostings(ctx context.Context, postings
 	_ = ctx
 	r.upsertedPostings = append([]model.JobPosting(nil), postings...)
 	r.upsertedDuties = cloneDutyCodesBySourceKey(dutyCodesBySourceKey)
+	return nil
+}
+
+func (r *stubCrawlRunRepository) GetJobPostingIDsBySourceKeys(ctx context.Context, source string, sourceKeys []string) (map[string]uint, error) {
+	_ = ctx
+	_ = source
+	out := make(map[string]uint, len(sourceKeys))
+	for _, key := range sourceKeys {
+		if id, ok := r.idsBySourceKey[key]; ok {
+			out[key] = id
+		}
+	}
+	return out, nil
+}
+
+func (r *stubCrawlRunRepository) UpsertJobPostingBodyHTML(ctx context.Context, jobPostingID uint, text string) error {
+	_ = ctx
+	if r.upsertedBodies == nil {
+		r.upsertedBodies = make(map[uint]string)
+	}
+	r.upsertedBodies[jobPostingID] = text
+	return nil
+}
+
+func (r *stubCrawlRunRepository) ReplaceJobPostingImages(ctx context.Context, jobPostingID uint, urls []string) error {
+	_ = ctx
+	if r.replacedImages == nil {
+		r.replacedImages = make(map[uint][]string)
+	}
+	r.replacedImages[jobPostingID] = append([]string(nil), urls...)
 	return nil
 }
 
@@ -233,6 +266,64 @@ func TestRunScrapesAndPersistsResults(t *testing.T) {
 	assert.Contains(t, progress.String(), "crawler run persisted successfully")
 }
 
+func TestRunEnrichesAndPersistsBodiesAndImages(t *testing.T) {
+	scrapedPostings := []gamejob.ScrapedPosting{
+		{
+			SourceKey:    "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868",
+			Title:        "Server Engineer",
+			Company:      "에피드게임즈",
+			DutyCode:     1,
+			ClosingDate:  "채용시",
+			URL:          "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868",
+			ObservedDate: time.Date(2026, 3, 25, 0, 0, 0, 0, seoulLocation),
+		},
+		{
+			SourceKey:    "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275869",
+			Title:        "Image Posting",
+			Company:      "크니브스튜디오",
+			DutyCode:     16,
+			ClosingDate:  "채용시",
+			URL:          "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275869",
+			ObservedDate: time.Date(2026, 3, 25, 0, 0, 0, 0, seoulLocation),
+		},
+	}
+	repo := &stubCrawlRunRepository{
+		latestFinishedAt: timePtr(time.Date(2026, 3, 20, 23, 30, 0, 0, time.UTC)),
+		idsBySourceKey: map[string]uint{
+			"https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868": 101,
+			"https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275869": 102,
+		},
+	}
+	collector := &stubCollector{postings: scrapedPostings}
+	detailByURL := map[string]gamejob.DetailContent{
+		"https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275868": {
+			TextContent: "본문 텍스트입니다.",
+			ImageURLs:   []string{"https://imgs.gamejob.co.kr/ext/x.png"},
+		},
+		"https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275869": {
+			ImageURLs: []string{"https://imgs.gamejob.co.kr/ext/y.png"},
+		},
+	}
+
+	crawler, err := newCrawler(repo, collector.Scrape,
+		WithNowFunc(func() time.Time {
+			return time.Date(2026, 3, 25, 8, 0, 0, 0, time.UTC)
+		}),
+		WithDetailCollector(func(_ context.Context, postingURL string) (gamejob.DetailContent, error) {
+			return detailByURL[postingURL], nil
+		}),
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, crawler.Run(context.Background()))
+
+	assert.Equal(t, "본문 텍스트입니다.", repo.upsertedBodies[101])
+	_, hasBody102 := repo.upsertedBodies[102]
+	assert.False(t, hasBody102, "image-only posting should not get an html body row")
+	assert.Equal(t, []string{"https://imgs.gamejob.co.kr/ext/x.png"}, repo.replacedImages[101])
+	assert.Equal(t, []string{"https://imgs.gamejob.co.kr/ext/y.png"}, repo.replacedImages[102])
+}
+
 func TestPersistCrawlResultsStoresPostingsAndCreatesRun(t *testing.T) {
 	now := time.Date(2026, 3, 31, 9, 0, 0, 0, time.UTC)
 	postings := []model.JobPosting{
@@ -250,7 +341,7 @@ func TestPersistCrawlResultsStoresPostingsAndCreatesRun(t *testing.T) {
 
 	err := crawler.persistCrawlResults(context.Background(), postings, map[string][]int{
 		"jobs/example/1": {3},
-	}, now.Add(-5*time.Minute), now)
+	}, nil, now.Add(-5*time.Minute), now)
 	require.NoError(t, err)
 
 	require.Len(t, repo.upsertedPostings, 1)
