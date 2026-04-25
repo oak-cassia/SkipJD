@@ -115,55 +115,67 @@ func (s *ClientScraper) Scrape(ctx context.Context, opts ScrapeOptions) ([]Scrap
 
 	for _, dutyCode := range defaultDutyCodes {
 		for page := 1; page <= maxPages; page++ {
-			htmlText, err := s.fetchPage(ctx, dutyCode, page)
+			pagePostings, stop, hasNext, err := s.scrapePage(ctx, dutyCode, page, todayDate, opts)
 			if err != nil {
 				return nil, err
 			}
+			postings = append(postings, pagePostings...)
 
-			parsedPage, err := s.parseListPage(htmlText, page)
-			if err != nil {
-				return nil, err
-			}
-			if len(parsedPage.rows) == 0 {
-				break
-			}
-
-			stop := false
-			for _, row := range parsedPage.rows {
-				observedDate, err := s.parseObservedDate(todayDate, row.modifyText)
-				if err != nil {
-					return nil, err
-				}
-				sourceKey, err := buildSourceKey(row.url)
-				if err != nil {
-					return nil, err
-				}
-
-				scrapedPosting := ScrapedPosting{
-					SourceKey:          sourceKey,
-					Title:              row.title,
-					Company:            row.company,
-					DutyCode:           dutyCode,
-					ClosingDate:        row.closingDate,
-					URL:                row.url,
-					MinExperienceYears: parseMinExperienceYears(row.expText),
-					ObservedDate:       observedDate,
-				}
-				if opts.Stop != nil && opts.Stop(scrapedPosting) {
-					stop = true
-					break
-				}
-
-				postings = append(postings, scrapedPosting)
-			}
-
-			if stop || !parsedPage.hasNext {
+			if stop || !hasNext {
 				break
 			}
 		}
 	}
 
 	return postings, nil
+}
+
+func (s *ClientScraper) scrapePage(ctx context.Context, dutyCode int, page int, todayDate time.Time, opts ScrapeOptions) ([]ScrapedPosting, bool, bool, error) {
+	htmlText, err := s.fetchPage(ctx, dutyCode, page)
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	parsedPage, err := s.parseListPage(htmlText, page)
+	if err != nil {
+		return nil, false, false, err
+	}
+	if len(parsedPage.rows) == 0 {
+		return nil, false, false, nil
+	}
+
+	var postings []ScrapedPosting
+	stop := false
+
+	for _, row := range parsedPage.rows {
+		observedDate, err := s.parseObservedDate(todayDate, row.modifyText)
+		if err != nil {
+			return nil, false, false, err
+		}
+		sourceKey, err := buildSourceKey(row.url)
+		if err != nil {
+			return nil, false, false, err
+		}
+
+		scrapedPosting := ScrapedPosting{
+			SourceKey:          sourceKey,
+			Title:              row.title,
+			Company:            row.company,
+			DutyCode:           dutyCode,
+			ClosingDate:        row.closingDate,
+			URL:                row.url,
+			MinExperienceYears: parseMinExperienceYears(row.expText),
+			ObservedDate:       observedDate,
+		}
+		if opts.Stop != nil && opts.Stop(scrapedPosting) {
+			stop = true
+			break
+		}
+
+		postings = append(postings, scrapedPosting)
+	}
+
+	return postings, stop, parsedPage.hasNext, nil
 }
 
 func (s *ClientScraper) fetchPage(ctx context.Context, dutyCode int, page int) (string, error) {
