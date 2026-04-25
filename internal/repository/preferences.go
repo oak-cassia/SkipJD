@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -154,6 +155,42 @@ func (r *PreferencesRepository) GetUserDutyCodes(ctx context.Context, userID uin
 		codes = append(codes, row.DutyCode)
 	}
 	return codes, nil
+}
+
+func (r *PreferencesRepository) ReplaceUserCareer(ctx context.Context, userID uint, years *int) error {
+	if userID == 0 {
+		return fmt.Errorf("replace user career: userID must be > 0")
+	}
+
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.
+			Where("user_id = ?", userID).
+			Delete(&model.UserCareer{}).
+			Error; err != nil {
+			return err
+		}
+
+		if years == nil {
+			return nil
+		}
+
+		return tx.Create(&model.UserCareer{UserID: userID, ExperienceYears: years}).Error
+	})
+}
+
+func (r *PreferencesRepository) GetUserCareer(ctx context.Context, userID uint) (*int, error) {
+	var row model.UserCareer
+	err := r.db.WithContext(ctx).
+		Where("user_id = ?", userID).
+		Take(&row).
+		Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get user career: %w", err)
+	}
+	return row.ExperienceYears, nil
 }
 
 func (r *PreferencesRepository) GetUserCompanyNames(ctx context.Context, userID uint) ([]string, error) {

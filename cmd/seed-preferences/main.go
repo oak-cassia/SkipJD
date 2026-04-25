@@ -30,6 +30,7 @@ func main() {
 	dutyCodesFlag := flag.String("duty-codes", "1,3", "comma-separated duty codes (1=client, 3=server, 16=AI)")
 	companyCount := flag.Int("company-count", 5, "number of top-N companies from job_postings.company DISTINCT")
 	companiesFlag := flag.String("companies", "", "comma-separated company names (overrides --company-count)")
+	careerYearsFlag := flag.Int("career-years", -1, "user experience years (>=0; -1 means unset/clear)")
 	apply := flag.Bool("apply", false, "apply changes (default: dry-run)")
 	flag.Parse()
 
@@ -54,10 +55,13 @@ func main() {
 		log.Fatalf("resolve companies: %v", err)
 	}
 
+	careerYears := resolveCareerYears(*careerYearsFlag)
+
 	fmt.Printf("planned preferences for user_id=%d:\n", *userID)
-	fmt.Printf("  email     : %s\n", *emailFlag)
-	fmt.Printf("  duty_codes: %v\n", dutyCodes)
-	fmt.Printf("  companies : %v\n", companies)
+	fmt.Printf("  email      : %s\n", *emailFlag)
+	fmt.Printf("  duty_codes : %v\n", dutyCodes)
+	fmt.Printf("  companies  : %v\n", companies)
+	fmt.Printf("  career_yrs : %s\n", formatCareerYears(careerYears))
 
 	if !*apply {
 		fmt.Println("\n(dry-run) re-run with --apply to persist.")
@@ -76,6 +80,9 @@ func main() {
 	if err := repo.ReplaceUserCompanyPreferences(ctx, uint(*userID), companies); err != nil {
 		log.Fatalf("replace company preferences: %v", err)
 	}
+	if err := repo.ReplaceUserCareer(ctx, uint(*userID), careerYears); err != nil {
+		log.Fatalf("replace user career: %v", err)
+	}
 
 	finalDuties, err := repo.GetUserDutyCodes(ctx, uint(*userID))
 	if err != nil {
@@ -85,10 +92,30 @@ func main() {
 	if err != nil {
 		log.Fatalf("read back company preferences: %v", err)
 	}
+	finalCareer, err := repo.GetUserCareer(ctx, uint(*userID))
+	if err != nil {
+		log.Fatalf("read back user career: %v", err)
+	}
 
 	fmt.Printf("\napplied. current state for user_id=%d:\n", *userID)
-	fmt.Printf("  duty_codes: %v\n", finalDuties)
-	fmt.Printf("  companies : %v\n", finalCompanies)
+	fmt.Printf("  duty_codes : %v\n", finalDuties)
+	fmt.Printf("  companies  : %v\n", finalCompanies)
+	fmt.Printf("  career_yrs : %s\n", formatCareerYears(finalCareer))
+}
+
+func resolveCareerYears(raw int) *int {
+	if raw < 0 {
+		return nil
+	}
+	v := raw
+	return &v
+}
+
+func formatCareerYears(years *int) string {
+	if years == nil {
+		return "(unset)"
+	}
+	return strconv.Itoa(*years)
 }
 
 func resolveCompanies(ctx context.Context, repo *repository.PreferencesRepository, raw string, topN int) ([]string, error) {

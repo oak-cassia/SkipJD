@@ -17,12 +17,12 @@ func TestEnsureUserIsIdempotent(t *testing.T) {
 	repo := NewPreferencesRepository(newPreferencesTestDB(t))
 	ctx := context.Background()
 
-	first, err := repo.EnsureUser(ctx, 1)
+	first, err := repo.EnsureUser(ctx, 1, "u1@example.com")
 	require.NoError(t, err)
 	require.Equal(t, uint(1), first.ID)
 	require.False(t, first.CreatedAt.IsZero())
 
-	second, err := repo.EnsureUser(ctx, 1)
+	second, err := repo.EnsureUser(ctx, 1, "u1@example.com")
 	require.NoError(t, err)
 	assert.Equal(t, first.ID, second.ID)
 	assert.True(t, first.CreatedAt.Equal(second.CreatedAt), "CreatedAt should be stable across EnsureUser calls")
@@ -31,14 +31,14 @@ func TestEnsureUserIsIdempotent(t *testing.T) {
 func TestEnsureUserRejectsZeroID(t *testing.T) {
 	repo := NewPreferencesRepository(newPreferencesTestDB(t))
 
-	_, err := repo.EnsureUser(context.Background(), 0)
+	_, err := repo.EnsureUser(context.Background(), 0, "u0@example.com")
 	assert.Error(t, err)
 }
 
 func TestReplaceUserDutyPreferencesReplacesAllRows(t *testing.T) {
 	repo := NewPreferencesRepository(newPreferencesTestDB(t))
 	ctx := context.Background()
-	_, err := repo.EnsureUser(ctx, 1)
+	_, err := repo.EnsureUser(ctx, 1, "u1@example.com")
 	require.NoError(t, err)
 
 	require.NoError(t, repo.ReplaceUserDutyPreferences(ctx, 1, []int{1, 3}))
@@ -55,7 +55,7 @@ func TestReplaceUserDutyPreferencesReplacesAllRows(t *testing.T) {
 func TestReplaceUserDutyPreferencesWithEmptyClearsAll(t *testing.T) {
 	repo := NewPreferencesRepository(newPreferencesTestDB(t))
 	ctx := context.Background()
-	_, err := repo.EnsureUser(ctx, 1)
+	_, err := repo.EnsureUser(ctx, 1, "u1@example.com")
 	require.NoError(t, err)
 
 	require.NoError(t, repo.ReplaceUserDutyPreferences(ctx, 1, []int{1, 3}))
@@ -69,7 +69,7 @@ func TestReplaceUserDutyPreferencesWithEmptyClearsAll(t *testing.T) {
 func TestReplaceUserCompanyPreferencesNormalizesAndDeduplicates(t *testing.T) {
 	repo := NewPreferencesRepository(newPreferencesTestDB(t))
 	ctx := context.Background()
-	_, err := repo.EnsureUser(ctx, 1)
+	_, err := repo.EnsureUser(ctx, 1, "u1@example.com")
 	require.NoError(t, err)
 
 	require.NoError(t, repo.ReplaceUserCompanyPreferences(ctx, 1, []string{
@@ -88,9 +88,9 @@ func TestReplaceUserCompanyPreferencesNormalizesAndDeduplicates(t *testing.T) {
 func TestReplaceUserCompanyPreferencesIsolatesByUser(t *testing.T) {
 	repo := NewPreferencesRepository(newPreferencesTestDB(t))
 	ctx := context.Background()
-	_, err := repo.EnsureUser(ctx, 1)
+	_, err := repo.EnsureUser(ctx, 1, "u1@example.com")
 	require.NoError(t, err)
-	_, err = repo.EnsureUser(ctx, 2)
+	_, err = repo.EnsureUser(ctx, 2, "u2@example.com")
 	require.NoError(t, err)
 
 	require.NoError(t, repo.ReplaceUserCompanyPreferences(ctx, 1, []string{"넵튠"}))
@@ -104,6 +104,86 @@ func TestReplaceUserCompanyPreferencesIsolatesByUser(t *testing.T) {
 	names2, err := repo.GetUserCompanyNames(ctx, 2)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"크래프톤"}, names2, "replacing user 1 must not touch user 2")
+}
+
+func TestReplaceUserCareerCreatesAndUpdatesSingleRow(t *testing.T) {
+	db := newPreferencesTestDB(t)
+	repo := NewPreferencesRepository(db)
+	ctx := context.Background()
+	_, err := repo.EnsureUser(ctx, 1, "u1@example.com")
+	require.NoError(t, err)
+
+	years3 := 3
+	require.NoError(t, repo.ReplaceUserCareer(ctx, 1, &years3))
+	got, err := repo.GetUserCareer(ctx, 1)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, 3, *got)
+
+	years5 := 5
+	require.NoError(t, repo.ReplaceUserCareer(ctx, 1, &years5))
+	got, err = repo.GetUserCareer(ctx, 1)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, 5, *got)
+
+	var count int64
+	require.NoError(t, db.Model(&model.UserCareer{}).Where("user_id = ?", 1).Count(&count).Error)
+	assert.Equal(t, int64(1), count, "exactly one row per user")
+}
+
+func TestReplaceUserCareerNilClearsRow(t *testing.T) {
+	repo := NewPreferencesRepository(newPreferencesTestDB(t))
+	ctx := context.Background()
+	_, err := repo.EnsureUser(ctx, 1, "u1@example.com")
+	require.NoError(t, err)
+
+	years := 2
+	require.NoError(t, repo.ReplaceUserCareer(ctx, 1, &years))
+	require.NoError(t, repo.ReplaceUserCareer(ctx, 1, nil))
+
+	got, err := repo.GetUserCareer(ctx, 1)
+	require.NoError(t, err)
+	assert.Nil(t, got)
+}
+
+func TestReplaceUserCareerEntryLevelDistinctFromUnset(t *testing.T) {
+	repo := NewPreferencesRepository(newPreferencesTestDB(t))
+	ctx := context.Background()
+	_, err := repo.EnsureUser(ctx, 1, "u1@example.com")
+	require.NoError(t, err)
+
+	zero := 0
+	require.NoError(t, repo.ReplaceUserCareer(ctx, 1, &zero))
+
+	got, err := repo.GetUserCareer(ctx, 1)
+	require.NoError(t, err)
+	require.NotNil(t, got, "0 (entry-level) must be stored, not treated as unset")
+	assert.Equal(t, 0, *got)
+}
+
+func TestReplaceUserCareerIsolatesByUser(t *testing.T) {
+	repo := NewPreferencesRepository(newPreferencesTestDB(t))
+	ctx := context.Background()
+	_, err := repo.EnsureUser(ctx, 1, "u1@example.com")
+	require.NoError(t, err)
+	_, err = repo.EnsureUser(ctx, 2, "u2@example.com")
+	require.NoError(t, err)
+
+	y1 := 4
+	y2 := 7
+	require.NoError(t, repo.ReplaceUserCareer(ctx, 1, &y1))
+	require.NoError(t, repo.ReplaceUserCareer(ctx, 2, &y2))
+	require.NoError(t, repo.ReplaceUserCareer(ctx, 1, nil))
+
+	got1, err := repo.GetUserCareer(ctx, 1)
+	require.NoError(t, err)
+	assert.Nil(t, got1)
+
+	got2, err := repo.GetUserCareer(ctx, 2)
+	require.NoError(t, err)
+	require.NotNil(t, got2)
+	assert.Equal(t, 7, *got2, "clearing user 1 must not touch user 2")
 }
 
 func TestListDistinctCompanyNamesFromJobPostings(t *testing.T) {
@@ -138,6 +218,7 @@ func newPreferencesTestDB(t *testing.T) *gorm.DB {
 		&model.User{},
 		&model.UserDutyPreference{},
 		&model.UserCompanyPreference{},
+		&model.UserCareer{},
 	))
 
 	return db
