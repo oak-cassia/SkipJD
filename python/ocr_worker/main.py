@@ -102,8 +102,8 @@ def require_env(key: str) -> str:
 
 
 def fetch_pending_jobs(session: Session, limit: int) -> list[PostingJob]:
-    posting_ids = session.execute(
-        select(JobPostingImage.job_posting_id)
+    rows = session.execute(
+        select(JobPostingImage.job_posting_id, JobPosting.last_seen_at)
         .distinct()
         .outerjoin(
             JobPostingBody,
@@ -114,7 +114,8 @@ def fetch_pending_jobs(session: Session, limit: int) -> list[PostingJob]:
         .where(JobPostingBody.id.is_(None))
         .order_by(JobPosting.last_seen_at.desc())
         .limit(limit)
-    ).scalars().all()
+    ).all()
+    posting_ids = [row[0] for row in rows]
 
     if not posting_ids:
         return []
@@ -150,16 +151,15 @@ def ocr_image(ocr, payload: bytes) -> str:
 
     image = Image.open(io.BytesIO(payload)).convert("RGB")
     arr = np.array(image)
-    result = ocr.ocr(arr, cls=False)
-    if not result or not result[0]:
+    result = ocr.predict(arr)
+    if not result:
         return ""
     pieces: list[str] = []
-    for line in result[0]:
-        if not line or len(line) < 2:
-            continue
-        text = line[1][0] if isinstance(line[1], (list, tuple)) else line[1]
-        if isinstance(text, str) and text.strip():
-            pieces.append(text.strip())
+    for page in result:
+        texts = page.get("rec_texts") or []
+        for text in texts:
+            if isinstance(text, str) and text.strip():
+                pieces.append(text.strip())
     return "\n".join(pieces)
 
 
@@ -205,7 +205,7 @@ def run(limit: int, min_chars: int) -> None:
     from paddleocr import PaddleOCR
 
     log(f"loading paddle ocr model lang=korean")
-    ocr = PaddleOCR(use_angle_cls=False, lang="korean", show_log=False)
+    ocr = PaddleOCR(use_textline_orientation=False, lang="korean")
 
     engine = build_engine()
     with Session(engine) as session:
