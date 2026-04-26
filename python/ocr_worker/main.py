@@ -147,11 +147,19 @@ def download_image(url: str, timeout: float = 15.0) -> bytes | None:
 
 def ocr_image(ocr, payload: bytes) -> str:
     import numpy as np
-    from PIL import Image
+    from PIL import Image, UnidentifiedImageError
 
-    image = Image.open(io.BytesIO(payload)).convert("RGB")
+    try:
+        image = Image.open(io.BytesIO(payload)).convert("RGB")
+    except (UnidentifiedImageError, OSError) as exc:
+        log(f"image decode failed err={exc}")
+        return ""
     arr = np.array(image)
-    result = ocr.predict(arr)
+    try:
+        result = ocr.predict(arr)
+    except Exception as exc:
+        log(f"ocr predict failed err={exc}")
+        return ""
     if not result:
         return ""
     pieces: list[str] = []
