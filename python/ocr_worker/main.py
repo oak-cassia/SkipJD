@@ -133,16 +133,57 @@ def fetch_pending_jobs(session: Session, limit: int) -> list[PostingJob]:
     return [PostingJob(posting_id=pid, image_urls=grouped[pid]) for pid in posting_ids if pid in grouped]
 
 
+_BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+)
+
+# Only fetch images from hosts we trust. Other domains in job_posting_images
+# (playwith welfare icons, xlgames banners, etc.) are not posting bodies and
+# loading arbitrary external URLs widens the SSRF surface unnecessarily.
+_ALLOWED_HOST_SUFFIX = "gamejob.co.kr"
+_REFERER = "https://www.gamejob.co.kr/"
+
+_IMAGE_MAGIC = (
+    b"\xff\xd8\xff",
+    b"\x89PNG\r\n\x1a\n",
+    b"GIF87a",
+    b"GIF89a",
+    b"RIFF",
+    b"BM",
+)
+
+
+def _host_allowed(url: str) -> bool:
+    from urllib.parse import urlsplit
+
+    host = (urlsplit(url).hostname or "").lower()
+    return host == _ALLOWED_HOST_SUFFIX or host.endswith("." + _ALLOWED_HOST_SUFFIX)
+
+
 def download_image(url: str, timeout: float = 15.0) -> bytes | None:
+    if not _host_allowed(url):
+        log(f"download skipped url={url} reason=host_not_allowed")
+        return None
+    headers = {
+        "User-Agent": _BROWSER_USER_AGENT,
+        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        "Referer": _REFERER,
+    }
     try:
-        resp = requests.get(url, timeout=timeout)
-        if resp.status_code != 200:
-            log(f"download failed url={url} status={resp.status_code}")
-            return None
-        return resp.content
+        resp = requests.get(url, timeout=timeout, headers=headers)
     except Exception as exc:
         log(f"download error url={url} err={exc}")
         return None
+    if resp.status_code != 200:
+        log(f"download failed url={url} status={resp.status_code}")
+        return None
+    content_type = (resp.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+    payload = resp.content
+    if not content_type.startswith("image/") and not payload.startswith(_IMAGE_MAGIC):
+        log(f"download non_image url={url} ct={content_type or 'missing'} bytes={len(payload)}")
+        return None
+    return payload
 
 
 def ocr_image(ocr, payload: bytes) -> str:
