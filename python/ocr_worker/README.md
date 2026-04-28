@@ -19,23 +19,27 @@ gemini --version
 - **OAuth (무료 quota)** — `gemini` 첫 실행 시 브라우저 플로우. cron 환경에서는 토큰 만료 시 무인 갱신이 안 되므로, 만료 신호(stderr `auth` 류 메시지)가 보이면 인터랙티브 셸에서 한 번 더 실행해 갱신한다.
 - **API 키** — `GEMINI_API_KEY=...` 환경변수.
 
-### 2. Python 의존성
+### 2. Python 의존성 (uv)
+
+Python 의존성 및 가상환경은 [uv](https://docs.astral.sh/uv/)로 관리한다.
 
 ```sh
-cd python/ocr_worker
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+# Mac
+brew install uv
+
+# 또는 curl
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-`requirements.txt`는 `SQLAlchemy`, `PyMySQL`, `requests`, `python-dotenv` 네 줄이 전부다.
+`pyproject.toml`에 의존성이 명시되어 있으므로 별도 설치 과정 없이 바로 실행하면 `uv`가 알아서 가상환경 생성 및 패키지 설치를 진행한다.
 
 ## 실행
 
 ```sh
-python main.py                        # limit 50, min-ocr-chars 20 (기본)
-python main.py --limit 200            # 운영 권고치
-python main.py --limit 1 --debug-dir ./tmp_debug   # 단일 포스팅 디버깅
+cd python/ocr_worker
+uv run main.py                        # limit 50, min-ocr-chars 20 (기본)
+uv run main.py --limit 200            # 운영 권고치
+uv run main.py --limit 1 --debug-dir ./tmp_debug   # 단일 포스팅 디버깅
 ```
 
 DB 접속 정보는 프로젝트 루트의 `.env`에서 자동 로드 (Go 크롤러와 공유):
@@ -62,7 +66,7 @@ DB 접속 정보는 프로젝트 루트의 `.env`에서 자동 로드 (Go 크롤
 매일 새벽 3시 실행:
 
 ```cron
-0 3 * * * cd /path/to/skipjd && /path/to/.venv/bin/python python/ocr_worker/main.py --limit 200 >> /var/log/ocr_worker.log 2>&1
+0 3 * * * cd /path/to/skipjd/python/ocr_worker && uv run main.py --limit 200 >> /var/log/ocr_worker.log 2>&1
 ```
 
 OAuth 사용 시 토큰 만료가 cron에서 무인 복구되지 않는다는 점에 주의.
