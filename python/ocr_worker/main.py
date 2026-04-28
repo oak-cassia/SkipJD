@@ -1,27 +1,30 @@
 """OCR batch worker for job postings whose body is stored as images.
 
 Reads JobPostingImage rows whose JobPosting has no OCR-sourced body yet,
-runs PaddleOCR on each image, and writes the merged text into
-JobPostingBody. Failures are logged to stderr; the next batch run retries
-naturally because no failure state is persisted.
+extracts text from each image via the locally-installed `gemini` CLI
+(headless `-p` mode), and writes the merged text into JobPostingBody.
+Failures are logged to stderr; the next batch run retries naturally
+because no failure state is persisted.
 
 Usage:
     python main.py [--limit 50] [--min-ocr-chars 20]
 
 Reads DB config from project root .env (shared with the Go crawler):
     DB_USER, DB_PASS, DB_HOST, DB_PORT, DB_NAME, REQUIRE_DB_TLS
+
+Requires `gemini` (gemini-cli) on PATH and an authenticated session
+(OAuth or GEMINI_API_KEY).
 """
 
 from __future__ import annotations
 
 import argparse
-import io
 import os
+import subprocess
 import sys
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
 
 import requests
 from dotenv import load_dotenv
@@ -101,7 +104,7 @@ def require_env(key: str) -> str:
     return value
 
 
-def fetch_pending_jobs(session: Session, limit: int) -> list[PostingJob]:
+def fetch_pending_jobs(session: Session, limit: int, offset: int = 0) -> list[PostingJob]:
     rows = session.execute(
         select(JobPostingImage.job_posting_id, JobPosting.last_seen_at)
         .distinct()
@@ -113,6 +116,7 @@ def fetch_pending_jobs(session: Session, limit: int) -> list[PostingJob]:
         .join(JobPosting, JobPosting.id == JobPostingImage.job_posting_id)
         .where(JobPostingBody.id.is_(None))
         .order_by(JobPosting.last_seen_at.desc())
+        .offset(offset)
         .limit(limit)
     ).all()
     posting_ids = [row[0] for row in rows]
@@ -186,39 +190,83 @@ def download_image(url: str, timeout: float = 15.0) -> bytes | None:
     return payload
 
 
-def ocr_image(ocr, payload: bytes) -> str:
-    import numpy as np
-    from PIL import Image, UnidentifiedImageError
+_GEMINI_PROMPT = (
+    "이 이미지에 보이는 텍스트(한국어/영어 포함)를 모두 추출해서 "
+    "줄 단위로 한 줄에 하나씩 출력해줘. 설명, 마크다운, 메타정보 없이 텍스트만. "
+    "표는 줄 단위로 풀어서 적어줘."
+)
+# gemini-cli internally retries on 429 with backoff for several minutes; cap
+# the per-image wall time so a stuck call cannot stall the whole batch.
+_GEMINI_TIMEOUT_SECONDS = 600
 
+
+def ocr_image(img_path: str) -> str:
+    img_abs = os.path.abspath(img_path)
+    img_dir = os.path.dirname(img_abs)
+    img_name = os.path.basename(img_abs)
+    cmd = ["gemini", "-p", f"{_GEMINI_PROMPT} @{img_name}", "-o", "text"]
     try:
-        image = Image.open(io.BytesIO(payload)).convert("RGB")
-    except (UnidentifiedImageError, OSError) as exc:
-        log(f"image decode failed err={exc}")
+        proc = subprocess.run(
+            cmd,
+            cwd=img_dir,
+            capture_output=True,
+            text=True,
+            timeout=_GEMINI_TIMEOUT_SECONDS,
+        )
+    except FileNotFoundError:
+        log("ocr gemini not found — install gemini-cli and ensure it is on PATH")
         return ""
-    arr = np.array(image)
-    try:
-        result = ocr.predict(arr)
-    except Exception as exc:
-        log(f"ocr predict failed err={exc}")
+    except subprocess.TimeoutExpired:
+        log(f"ocr gemini timeout img={img_name} after={_GEMINI_TIMEOUT_SECONDS}s")
         return ""
-    if not result:
+
+    if proc.returncode != 0:
+        stderr_tail = "\n".join((proc.stderr or "").strip().splitlines()[-3:])
+        log(f"ocr gemini exit={proc.returncode} img={img_name} stderr={stderr_tail!r}")
         return ""
-    pieces: list[str] = []
-    for page in result:
-        texts = page.get("rec_texts") or []
-        for text in texts:
-            if isinstance(text, str) and text.strip():
-                pieces.append(text.strip())
-    return "\n".join(pieces)
+
+    text = (proc.stdout or "").strip()
+    if not text:
+        log(f"ocr gemini empty stdout img={img_name}")
+    return text
 
 
-def process_posting(ocr, job: PostingJob, min_chars: int) -> str:
+def process_posting(job: PostingJob, min_chars: int, debug_dir: str | None = None) -> str:
+    import tempfile
+
     parts: list[str] = []
-    for url in job.image_urls:
+
+    if debug_dir:
+        os.makedirs(debug_dir, exist_ok=True)
+
+    for i, url in enumerate(job.image_urls):
         payload = download_image(url)
         if payload is None:
             continue
-        text = ocr_image(ocr, payload).strip()
+
+        if debug_dir:
+            base_name = f"{job.posting_id}_{i}"
+            img_path = os.path.join(debug_dir, f"{base_name}.jpg")
+            txt_path = os.path.join(debug_dir, f"{base_name}.txt")
+
+            with open(img_path, "wb") as f:
+                f.write(payload)
+
+            text = ocr_image(img_path).strip()
+
+            with open(txt_path, "w", encoding="utf-8") as f:
+                f.write(text)
+        else:
+            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+                tmp.write(payload)
+                tmp_path = tmp.name
+
+            try:
+                text = ocr_image(tmp_path).strip()
+            finally:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+
         if len(text) < min_chars:
             log(f"skip ocr_text_too_short posting_id={job.posting_id} url={url} chars={len(text)}")
             continue
@@ -230,7 +278,7 @@ def upsert_body(session: Session, posting_id: int, ocr_text: str) -> None:
     existing = session.execute(
         select(JobPostingBody).where(JobPostingBody.job_posting_id == posting_id)
     ).scalar_one_or_none()
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     if existing is None:
         session.add(JobPostingBody(
@@ -250,21 +298,16 @@ def upsert_body(session: Session, posting_id: int, ocr_text: str) -> None:
     existing.updated_at = now
 
 
-def run(limit: int, min_chars: int) -> None:
-    from paddleocr import PaddleOCR
-
-    log(f"loading paddle ocr model lang=korean")
-    ocr = PaddleOCR(use_textline_orientation=False, lang="korean")
-
+def run(limit: int, min_chars: int, debug_dir: str | None = None, offset: int = 0) -> None:
     engine = build_engine()
     with Session(engine) as session:
-        jobs = fetch_pending_jobs(session, limit)
+        jobs = fetch_pending_jobs(session, limit, offset)
         log(f"pending postings={len(jobs)}")
 
         success = 0
         empty = 0
         for job in jobs:
-            ocr_text = process_posting(ocr, job, min_chars)
+            ocr_text = process_posting(job, min_chars, debug_dir)
             if not ocr_text:
                 empty += 1
                 log(f"empty result posting_id={job.posting_id}")
@@ -283,11 +326,14 @@ def run(limit: int, min_chars: int) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--limit", type=int, default=50, help="max postings per run")
+    parser.add_argument("--offset", type=int, default=0, help="skip the first N postings (useful for debugging)")
     parser.add_argument("--min-ocr-chars", type=int, default=20,
                         help="discard image OCR result shorter than this many chars")
+    parser.add_argument("--debug-dir", type=str, default=None,
+                        help="directory to save downloaded images and OCR texts for debugging")
     args = parser.parse_args()
 
-    run(limit=args.limit, min_chars=args.min_ocr_chars)
+    run(limit=args.limit, min_chars=args.min_ocr_chars, debug_dir=args.debug_dir, offset=args.offset)
 
 
 if __name__ == "__main__":
