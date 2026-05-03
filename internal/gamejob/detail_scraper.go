@@ -14,8 +14,12 @@ import (
 )
 
 const (
-	detailIframePath = "/Recruit/GI_Read_Comt_Ifrm"
-	detailIframeQuery = "v1"
+	// gamejob 상세 페이지는 본문을 두 iframe으로 나눠서 제공한다.
+	// Comt: 회사/조직 소개 + 담당업무. GI_Comment: 자격요건/우대사항/전형/근무지.
+	// 두 iframe 모두 받아 합쳐야 본문이 완전해진다.
+	detailComtIframePath      = "/Recruit/GI_Read_Comt_Ifrm"
+	detailGICommentIframePath = "/Recruit/GI_Read_GI_Comment_Ifrm"
+	detailIframeQuery         = "v1"
 )
 
 // imageHostBlocklist drops images whose hostname suffix-matches any entry.
@@ -52,16 +56,35 @@ func NewDetailScraper(client *http.Client) *DetailScraper {
 	return &DetailScraper{client: client, baseURL: baseURL}
 }
 
-// Scrape fetches the iframe body for a posting URL and extracts text + image URLs.
-// The posting URL must contain a GI_No query parameter.
+// Scrape fetches both iframe bodies for a posting URL and returns the merged
+// text + image URLs. The posting URL must contain a GI_No query parameter.
+//
+// The Comt iframe (회사 소개/담당업무) is the primary source — if it fails the
+// whole scrape fails. The GI_Comment iframe (자격요건/우대사항/전형/근무지) is
+// treated as best-effort: if it errors we still return the primary content,
+// because some older or withdrawn postings only ship the Comt iframe.
 func (s *DetailScraper) Scrape(ctx context.Context, postingURL string) (DetailContent, error) {
 	giNo, err := parseGINo(postingURL)
 	if err != nil {
 		return DetailContent{}, err
 	}
 
+	primary, err := s.fetchAndExtract(ctx, giNo, detailComtIframePath)
+	if err != nil {
+		return DetailContent{}, err
+	}
+
+	secondary, err := s.fetchAndExtract(ctx, giNo, detailGICommentIframePath)
+	if err != nil {
+		return primary, nil
+	}
+
+	return mergeDetails(primary, secondary), nil
+}
+
+func (s *DetailScraper) fetchAndExtract(ctx context.Context, giNo, path string) (DetailContent, error) {
 	iframeURL := s.baseURL.ResolveReference(&url.URL{
-		Path:     detailIframePath,
+		Path:     path,
 		RawQuery: "gno=" + giNo + "&" + detailIframeQuery,
 	}).String()
 
@@ -76,6 +99,24 @@ func (s *DetailScraper) Scrape(ctx context.Context, postingURL string) (DetailCo
 	}
 
 	return ExtractDetail(doc), nil
+}
+
+func mergeDetails(primary, secondary DetailContent) DetailContent {
+	var text strings.Builder
+	text.WriteString(primary.TextContent)
+	if primary.TextContent != "" && secondary.TextContent != "" {
+		text.WriteString("\n")
+	}
+	text.WriteString(secondary.TextContent)
+
+	images := make([]string, 0, len(primary.ImageURLs)+len(secondary.ImageURLs))
+	images = append(images, primary.ImageURLs...)
+	images = append(images, secondary.ImageURLs...)
+
+	return DetailContent{
+		TextContent: text.String(),
+		ImageURLs:   images,
+	}
 }
 
 func (s *DetailScraper) fetchIframe(ctx context.Context, iframeURL string) (string, error) {

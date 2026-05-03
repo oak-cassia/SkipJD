@@ -78,15 +78,58 @@ func TestIsBlockedImageDropsTrackingPixel(t *testing.T) {
 	assert.True(t, isBlockedImage(node, "https://example.com/p.gif"))
 }
 
-func TestDetailScraperBuildsIframeURLAndParses(t *testing.T) {
+func TestDetailScraperFetchesBothIframesAndMerges(t *testing.T) {
+	var paths []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/Recruit/GI_Read_Comt_Ifrm", r.URL.Path)
+		paths = append(paths, r.URL.Path)
 		assert.Equal(t, "278459", r.URL.Query().Get("gno"))
 
-		body, err := os.ReadFile("testdata/detail_image.html")
-		require.NoError(t, err)
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(body)
+		switch r.URL.Path {
+		case "/Recruit/GI_Read_Comt_Ifrm":
+			body, err := os.ReadFile("testdata/detail_image.html")
+			require.NoError(t, err)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(body)
+		case "/Recruit/GI_Read_GI_Comment_Ifrm":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`<html><body>[지원자격]<br>5년 이상의 서버 개발 경험</body></html>`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	scraper := NewDetailScraper(server.Client())
+	parsed, err := url.Parse(server.URL)
+	require.NoError(t, err)
+	scraper.baseURL = parsed
+
+	content, err := scraper.Scrape(context.Background(),
+		"https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=278459")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{
+		"/Recruit/GI_Read_Comt_Ifrm",
+		"/Recruit/GI_Read_GI_Comment_Ifrm",
+	}, paths)
+	assert.Contains(t, content.TextContent, "사전 과제")
+	assert.Contains(t, content.TextContent, "[지원자격]")
+	assert.Contains(t, content.TextContent, "5년 이상의 서버 개발 경험")
+	require.Len(t, content.ImageURLs, 1)
+}
+
+func TestDetailScraperGracefullyFallsBackWhenSecondaryIframeFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/Recruit/GI_Read_Comt_Ifrm":
+			body, err := os.ReadFile("testdata/detail_image.html")
+			require.NoError(t, err)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(body)
+		case "/Recruit/GI_Read_GI_Comment_Ifrm":
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
 	}))
 	defer server.Close()
 
@@ -99,7 +142,6 @@ func TestDetailScraperBuildsIframeURLAndParses(t *testing.T) {
 		"https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=278459")
 	require.NoError(t, err)
 	assert.Contains(t, content.TextContent, "사전 과제")
-	require.Len(t, content.ImageURLs, 1)
 }
 
 func loadFixture(t *testing.T, name string) *html.Node {
