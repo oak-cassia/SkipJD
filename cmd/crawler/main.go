@@ -31,6 +31,7 @@ func main() {
 		&model.JobPostingDuty{},
 		&model.JobPostingBody{},
 		&model.JobPostingImage{},
+		&model.JobPostingExtraction{},
 	); err != nil {
 		log.Fatalf("failed to migrate db: %v", err)
 	}

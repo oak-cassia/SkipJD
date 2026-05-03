@@ -24,25 +24,38 @@ func TestUpsertJobPostingBodyHTMLInsertsWhenAbsent(t *testing.T) {
 	repo := NewCrawlerRepository(newPostingBodyTestDB(t))
 	ctx := context.Background()
 
-	require.NoError(t, repo.UpsertJobPostingBodyHTML(ctx, 1, "본문 텍스트"))
+	require.NoError(t, repo.UpsertJobPostingBodyHTML(ctx, 1, "본문 텍스트", true))
 
 	var stored model.JobPostingBody
 	require.NoError(t, repo.db.WithContext(ctx).First(&stored, "job_posting_id = ?", 1).Error)
 	assert.Equal(t, "본문 텍스트", stored.Text)
 	assert.Equal(t, model.JobPostingBodySourceHTML, stored.Source)
+	assert.True(t, stored.ReadyForLLM)
+}
+
+func TestUpsertJobPostingBodyHTMLInsertsNotReadyWhenImagesPending(t *testing.T) {
+	repo := NewCrawlerRepository(newPostingBodyTestDB(t))
+	ctx := context.Background()
+
+	require.NoError(t, repo.UpsertJobPostingBodyHTML(ctx, 1, "본문 텍스트", false))
+
+	var stored model.JobPostingBody
+	require.NoError(t, repo.db.WithContext(ctx).First(&stored, "job_posting_id = ?", 1).Error)
+	assert.False(t, stored.ReadyForLLM)
 }
 
 func TestUpsertJobPostingBodyHTMLUpdatesExistingHTMLRow(t *testing.T) {
 	repo := NewCrawlerRepository(newPostingBodyTestDB(t))
 	ctx := context.Background()
 
-	require.NoError(t, repo.UpsertJobPostingBodyHTML(ctx, 1, "이전 본문"))
-	require.NoError(t, repo.UpsertJobPostingBodyHTML(ctx, 1, "새 본문"))
+	require.NoError(t, repo.UpsertJobPostingBodyHTML(ctx, 1, "이전 본문", false))
+	require.NoError(t, repo.UpsertJobPostingBodyHTML(ctx, 1, "새 본문", true))
 
 	var stored model.JobPostingBody
 	require.NoError(t, repo.db.WithContext(ctx).First(&stored, "job_posting_id = ?", 1).Error)
 	assert.Equal(t, "새 본문", stored.Text)
 	assert.Equal(t, model.JobPostingBodySourceHTML, stored.Source)
+	assert.True(t, stored.ReadyForLLM)
 }
 
 func TestUpsertJobPostingBodyHTMLPreservesExistingOCRRow(t *testing.T) {
@@ -54,14 +67,16 @@ func TestUpsertJobPostingBodyHTMLPreservesExistingOCRRow(t *testing.T) {
 		JobPostingID: 1,
 		Text:         "OCR로 추출된 본문",
 		Source:       model.JobPostingBodySourceOCR,
+		ReadyForLLM:  true,
 	}).Error)
 
-	require.NoError(t, repo.UpsertJobPostingBodyHTML(ctx, 1, "재크롤된 HTML 본문"))
+	require.NoError(t, repo.UpsertJobPostingBodyHTML(ctx, 1, "재크롤된 HTML 본문", false))
 
 	var stored model.JobPostingBody
 	require.NoError(t, db.WithContext(ctx).First(&stored, "job_posting_id = ?", 1).Error)
 	assert.Equal(t, "OCR로 추출된 본문", stored.Text)
 	assert.Equal(t, model.JobPostingBodySourceOCR, stored.Source)
+	assert.True(t, stored.ReadyForLLM)
 }
 
 func TestReplaceJobPostingImagesInsertsInOrder(t *testing.T) {

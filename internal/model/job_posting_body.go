@@ -12,6 +12,7 @@ type JobPostingBody struct {
 	JobPostingID uint   `gorm:"not null;uniqueIndex"`
 	Text         string `gorm:"type:longtext;not null"`
 	Source       string `gorm:"size:16;not null"`
+	ReadyForLLM  bool   `gorm:"column:ready_for_llm;not null;default:false;index"`
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }

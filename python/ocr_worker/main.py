@@ -29,6 +29,7 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 from sqlalchemy import (
+    Boolean,
     Column,
     DateTime,
     Integer,
@@ -59,6 +60,7 @@ class JobPostingBody(Base):
     job_posting_id = Column(Integer, nullable=False, unique=True)
     text = Column(Text, nullable=False)
     source = Column(String(16), nullable=False)
+    ready_for_llm = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime)
     updated_at = Column(DateTime)
 
@@ -285,6 +287,7 @@ def upsert_body(session: Session, posting_id: int, ocr_text: str) -> None:
             job_posting_id=posting_id,
             text=ocr_text,
             source=SOURCE_OCR,
+            ready_for_llm=True,
             created_at=now,
             updated_at=now,
         ))
@@ -295,6 +298,7 @@ def upsert_body(session: Session, posting_id: int, ocr_text: str) -> None:
     else:
         existing.text = ocr_text
     existing.source = SOURCE_OCR
+    existing.ready_for_llm = True
     existing.updated_at = now
 
 

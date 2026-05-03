@@ -14,7 +14,7 @@ type crawlRunRepository interface {
 	GetLatestFinishedAtBySource(ctx context.Context, source string) (*time.Time, error)
 	UpsertJobPostings(ctx context.Context, postings []model.JobPosting, dutyCodesBySourceKey map[string][]int) error
 	GetJobPostingIDsBySourceKeys(ctx context.Context, source string, sourceKeys []string) (map[string]uint, error)
-	UpsertJobPostingBodyHTML(ctx context.Context, jobPostingID uint, text string) error
+	UpsertJobPostingBodyHTML(ctx context.Context, jobPostingID uint, text string, readyForLLM bool) error
 	ReplaceJobPostingImages(ctx context.Context, jobPostingID uint, urls []string) error
 }
 
@@ -76,12 +76,17 @@ func (c *Crawler) persistPostingDetails(
 		}
 		detail := detailBySourceKey[sourceKey]
 
+		hasImages := len(detail.ImageURLs) > 0
 		if detail.TextContent != "" {
-			if err := c.crawlerRepository.UpsertJobPostingBodyHTML(ctx, id, detail.TextContent); err != nil {
+			// HTML-only postings are immediately LLM-ready; postings with
+			// pending images stay un-ready until the OCR worker finalizes
+			// the body.
+			readyForLLM := !hasImages
+			if err := c.crawlerRepository.UpsertJobPostingBodyHTML(ctx, id, detail.TextContent, readyForLLM); err != nil {
 				return fmt.Errorf("upsert body for %s: %w", sourceKey, err)
 			}
 		}
-		if len(detail.ImageURLs) > 0 {
+		if hasImages {
 			if err := c.crawlerRepository.ReplaceJobPostingImages(ctx, id, detail.ImageURLs); err != nil {
 				return fmt.Errorf("replace images for %s: %w", sourceKey, err)
 			}

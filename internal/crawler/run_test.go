@@ -67,6 +67,7 @@ type stubCrawlRunRepository struct {
 	createdCrawlRun  *model.CrawlRun
 	idsBySourceKey   map[string]uint
 	upsertedBodies   map[uint]string
+	bodyReadyForLLM  map[uint]bool
 	replacedImages   map[uint][]string
 }
 
@@ -102,12 +103,16 @@ func (r *stubCrawlRunRepository) GetJobPostingIDsBySourceKeys(ctx context.Contex
 	return out, nil
 }
 
-func (r *stubCrawlRunRepository) UpsertJobPostingBodyHTML(ctx context.Context, jobPostingID uint, text string) error {
+func (r *stubCrawlRunRepository) UpsertJobPostingBodyHTML(ctx context.Context, jobPostingID uint, text string, readyForLLM bool) error {
 	_ = ctx
 	if r.upsertedBodies == nil {
 		r.upsertedBodies = make(map[uint]string)
 	}
 	r.upsertedBodies[jobPostingID] = text
+	if r.bodyReadyForLLM == nil {
+		r.bodyReadyForLLM = make(map[uint]bool)
+	}
+	r.bodyReadyForLLM[jobPostingID] = readyForLLM
 	return nil
 }
 
@@ -320,8 +325,50 @@ func TestRunEnrichesAndPersistsBodiesAndImages(t *testing.T) {
 	assert.Equal(t, "본문 텍스트입니다.", repo.upsertedBodies[101])
 	_, hasBody102 := repo.upsertedBodies[102]
 	assert.False(t, hasBody102, "image-only posting should not get an html body row")
+	assert.False(t, repo.bodyReadyForLLM[101], "body with pending images should not be ready for LLM")
 	assert.Equal(t, []string{"https://imgs.gamejob.co.kr/ext/x.png"}, repo.replacedImages[101])
 	assert.Equal(t, []string{"https://imgs.gamejob.co.kr/ext/y.png"}, repo.replacedImages[102])
+}
+
+func TestRunMarksReadyForLLMWhenNoImages(t *testing.T) {
+	scrapedPostings := []gamejob.ScrapedPosting{
+		{
+			SourceKey:    "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275870",
+			Title:        "Text Only Posting",
+			Company:      "텍스트회사",
+			DutyCode:     1,
+			ClosingDate:  "채용시",
+			URL:          "https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275870",
+			ObservedDate: time.Date(2026, 3, 25, 0, 0, 0, 0, seoulLocation),
+		},
+	}
+	repo := &stubCrawlRunRepository{
+		latestFinishedAt: timePtr(time.Date(2026, 3, 20, 23, 30, 0, 0, time.UTC)),
+		idsBySourceKey: map[string]uint{
+			"https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275870": 201,
+		},
+	}
+	collector := &stubCollector{postings: scrapedPostings}
+	detailByURL := map[string]gamejob.DetailContent{
+		"https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=275870": {
+			TextContent: "이 공고는 이미지가 없습니다.",
+		},
+	}
+
+	crawler, err := newCrawler(repo, collector.Scrape,
+		WithNowFunc(func() time.Time {
+			return time.Date(2026, 3, 25, 8, 0, 0, 0, time.UTC)
+		}),
+		WithDetailCollector(func(_ context.Context, postingURL string) (gamejob.DetailContent, error) {
+			return detailByURL[postingURL], nil
+		}),
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, crawler.Run(context.Background()))
+
+	assert.Equal(t, "이 공고는 이미지가 없습니다.", repo.upsertedBodies[201])
+	assert.True(t, repo.bodyReadyForLLM[201], "body without images should be ready for LLM")
 }
 
 func TestPersistCrawlResultsStoresPostingsAndCreatesRun(t *testing.T) {
