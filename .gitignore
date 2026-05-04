@@ -46,8 +46,3 @@ __pycache__/
 *.pyc
 .venv/
 .pytest_cache/
-
-# OCR worker debug artifacts
-python/ocr_worker/debug_*/
-python/ocr_worker/vl_output/
-python/ocr_worker/tmp_debug/

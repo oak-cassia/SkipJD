@@ -1,0 +1,100 @@
+// Package ocrworker is a batch worker that runs OCR over images attached to
+// job postings via the local gemini-cli and persists the resulting text into
+// job_posting_bodies.
+package ocrworker
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"os"
+	"strings"
+	"unicode/utf8"
+
+	"skipjd/internal/model"
+	"skipjd/internal/repository"
+)
+
+// Options bundles the CLI flags the cmd entry point passes through.
+type Options struct {
+	Limit       int
+	Offset      int
+	MinOCRChars int
+	DebugDir    string
+}
+
+// Run processes up to opts.Limit pending postings sequentially. Per-row
+// failures are logged and skipped — the next batch run will retry naturally
+// because no failure state is persisted.
+func Run(ctx context.Context, repo *repository.CrawlerRepository, opts Options) error {
+	ids, err := repo.FetchPendingOCRPostingIDs(ctx, opts.Limit, opts.Offset)
+	if err != nil {
+		return fmt.Errorf("fetch pending: %w", err)
+	}
+	log.Printf("pending postings=%d", len(ids))
+
+	if opts.DebugDir != "" {
+		if err := os.MkdirAll(opts.DebugDir, 0o755); err != nil {
+			return fmt.Errorf("create debug dir: %w", err)
+		}
+	}
+
+	success, empty := 0, 0
+	for _, id := range ids {
+		images, err := repo.FetchImagesForPosting(ctx, id)
+		if err != nil {
+			log.Printf("fetch images failed posting_id=%d err=%v", id, err)
+			continue
+		}
+
+		ocrText := processPosting(ctx, id, images, opts)
+		if ocrText == "" {
+			empty++
+			log.Printf("empty result posting_id=%d", id)
+			continue
+		}
+
+		if err := repo.UpsertJobPostingBodyOCR(ctx, id, ocrText); err != nil {
+			log.Printf("upsert failed posting_id=%d err=%v", id, err)
+			continue
+		}
+		success++
+	}
+
+	log.Printf("done success=%d empty=%d total=%d", success, empty, len(ids))
+	return nil
+}
+
+func processPosting(ctx context.Context, postingID uint, images []model.JobPostingImage, opts Options) string {
+	parts := make([]string, 0, len(images))
+	for i, img := range images {
+		text, ok := ocrImage(ctx, img.ImageURL, postingID, i, opts)
+		if !ok {
+			continue
+		}
+		parts = append(parts, text)
+	}
+	return strings.TrimSpace(strings.Join(parts, "\n\n"))
+}
+
+func ocrImage(ctx context.Context, imageURL string, postingID uint, idx int, opts Options) (string, bool) {
+	payload, err := downloadImage(ctx, imageURL)
+	if err != nil {
+		log.Printf("download skipped posting_id=%d url=%s err=%v", postingID, imageURL, err)
+		return "", false
+	}
+
+	text, err := ocrPayload(ctx, payload, postingID, idx, opts.DebugDir)
+	if err != nil {
+		log.Printf("ocr failed posting_id=%d url=%s err=%v", postingID, imageURL, err)
+		return "", false
+	}
+
+	text = strings.TrimSpace(text)
+	chars := utf8.RuneCountInString(text)
+	if chars < opts.MinOCRChars {
+		log.Printf("skip ocr_text_too_short posting_id=%d url=%s chars=%d", postingID, imageURL, chars)
+		return "", false
+	}
+	return text, true
+}
