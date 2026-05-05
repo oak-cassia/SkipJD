@@ -9,24 +9,35 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync/atomic"
+	"time"
 	"unicode/utf8"
 
+	"golang.org/x/sync/errgroup"
+
+	"skipjd/internal/geminiexec"
 	"skipjd/internal/model"
 	"skipjd/internal/repository"
 )
 
 // Options bundles the CLI flags the cmd entry point passes through.
 type Options struct {
-	Limit       int
-	Offset      int
-	MinOCRChars int
-	DebugDir    string
+	Limit         int
+	Offset        int
+	MinOCRChars   int
+	DebugDir      string
+	Workers       int
+	GeminiTimeout time.Duration
 }
 
-// Run processes up to opts.Limit pending postings sequentially. Per-row
-// failures are logged and skipped — the next batch run will retry naturally
+// Run processes up to opts.Limit pending postings.
+// Failures are logged and skipped — the next batch run will retry naturally
 // because no failure state is persisted.
 func Run(ctx context.Context, repo *repository.CrawlerRepository, opts Options) error {
+	if err := geminiexec.EnsureAvailable(); err != nil {
+		return err
+	}
+
 	ids, err := repo.FetchPendingOCRPostingIDs(ctx, opts.Limit, opts.Offset)
 	if err != nil {
 		return fmt.Errorf("fetch pending: %w", err)
@@ -39,29 +50,44 @@ func Run(ctx context.Context, repo *repository.CrawlerRepository, opts Options) 
 		}
 	}
 
-	success, empty := 0, 0
-	for _, id := range ids {
-		images, err := repo.FetchImagesForPosting(ctx, id)
-		if err != nil {
-			log.Printf("fetch images failed posting_id=%d err=%v", id, err)
-			continue
-		}
+	var success, empty atomic.Int64
 
-		ocrText := processPosting(ctx, id, images, opts)
-		if ocrText == "" {
-			empty++
-			log.Printf("empty result posting_id=%d", id)
-			continue
-		}
-
-		if err := repo.UpsertJobPostingBodyOCR(ctx, id, ocrText); err != nil {
-			log.Printf("upsert failed posting_id=%d err=%v", id, err)
-			continue
-		}
-		success++
+	workers := opts.Workers
+	if workers <= 0 {
+		workers = 3
 	}
 
-	log.Printf("done success=%d empty=%d total=%d", success, empty, len(ids))
+	eg, egCtx := errgroup.WithContext(ctx)
+	eg.SetLimit(workers)
+
+	for _, id := range ids {
+		pID := id
+		eg.Go(func() error {
+			images, err := repo.FetchImagesForPosting(egCtx, pID)
+			if err != nil {
+				log.Printf("fetch images failed posting_id=%d err=%v", pID, err)
+				return nil
+			}
+
+			ocrText := processPosting(egCtx, pID, images, opts)
+			if ocrText == "" {
+				empty.Add(1)
+				log.Printf("empty result posting_id=%d", pID)
+				return nil
+			}
+
+			if err := repo.UpsertJobPostingBodyOCR(egCtx, pID, ocrText); err != nil {
+				log.Printf("upsert failed posting_id=%d err=%v", pID, err)
+				return nil
+			}
+			success.Add(1)
+			return nil
+		})
+	}
+
+	_ = eg.Wait()
+
+	log.Printf("done success=%d empty=%d total=%d", success.Load(), empty.Load(), len(ids))
 	return nil
 }
 
@@ -84,7 +110,7 @@ func ocrImage(ctx context.Context, imageURL string, postingID uint, idx int, opt
 		return "", false
 	}
 
-	text, err := ocrPayload(ctx, payload, postingID, idx, opts.DebugDir)
+	text, err := ocrPayload(ctx, payload, postingID, idx, opts.DebugDir, opts.GeminiTimeout)
 	if err != nil {
 		log.Printf("ocr failed posting_id=%d url=%s err=%v", postingID, imageURL, err)
 		return "", false

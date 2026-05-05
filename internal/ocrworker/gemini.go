@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"skipjd/internal/retry"
 )
 
 const geminiTimeout = 600 * time.Second
@@ -23,7 +25,11 @@ const ocrPrompt = "이 이미지에 보이는 텍스트(한국어/영어 포함)
 //
 // When debugDir is set, the image and the resulting OCR text are persisted
 // as <postingID>_<idx>.{jpg,txt} for after-the-fact inspection.
-func ocrPayload(ctx context.Context, payload []byte, postingID uint, idx int, debugDir string) (string, error) {
+func ocrPayload(ctx context.Context, payload []byte, postingID uint, idx int, debugDir string, timeout time.Duration) (string, error) {
+	if timeout <= 0 {
+		timeout = geminiTimeout
+	}
+
 	imgDir, imgName, cleanup, err := stageImage(payload, postingID, idx, debugDir)
 	if err != nil {
 		return "", err
@@ -32,7 +38,7 @@ func ocrPayload(ctx context.Context, payload []byte, postingID uint, idx int, de
 		defer func() { _ = os.Remove(cleanup) }()
 	}
 
-	text, err := runGemini(ctx, imgDir, imgName)
+	text, err := runGemini(ctx, imgDir, imgName, timeout)
 	if err != nil {
 		return "", err
 	}
@@ -78,24 +84,49 @@ func stageImage(payload []byte, postingID uint, idx int, debugDir string) (strin
 	return filepath.Dir(path), filepath.Base(path), path, nil
 }
 
-func runGemini(ctx context.Context, cwd, imgName string) (string, error) {
-	cmdCtx, cancel := context.WithTimeout(ctx, geminiTimeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(cmdCtx, "gemini", "-p", ocrPrompt+" @"+imgName, "-o", "text")
-	cmd.Dir = cwd
-
+func runGemini(ctx context.Context, cwd, imgName string, timeout time.Duration) (string, error) {
 	var stdout strings.Builder
-	var stderr strings.Builder
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
 
-	err := cmd.Run()
-	if errors.Is(cmdCtx.Err(), context.DeadlineExceeded) {
-		return "", fmt.Errorf("gemini timeout after %s img=%s", geminiTimeout, imgName)
-	}
+	err := retry.Do(ctx, 2, 2*time.Second,
+		func(attemptCtx context.Context) error {
+			cmdCtx, cancel := context.WithTimeout(attemptCtx, timeout)
+			defer cancel()
+
+			cmd := exec.CommandContext(cmdCtx, "gemini", "-p", ocrPrompt+" @"+imgName, "-o", "text")
+			cmd.Dir = cwd
+
+			stdout.Reset()
+			var stderr strings.Builder
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+
+			err := cmd.Run()
+			if errors.Is(cmdCtx.Err(), context.DeadlineExceeded) {
+				return fmt.Errorf("gemini timeout after %s img=%s", timeout, imgName)
+			}
+			if err != nil {
+				return classifyGeminiError(err, stderr.String(), imgName)
+			}
+			return nil
+		},
+		func(err error) bool {
+			if err == nil {
+				return false
+			}
+			if strings.Contains(err.Error(), "timeout") || errors.Is(err, context.DeadlineExceeded) {
+				return true
+			}
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				code := exitErr.ExitCode()
+				return code == 1 || code == 124 || code == 130
+			}
+			return false
+		},
+	)
+
 	if err != nil {
-		return "", classifyGeminiError(err, stderr.String(), imgName)
+		return "", err
 	}
 
 	return strings.TrimSpace(stdout.String()), nil

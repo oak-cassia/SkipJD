@@ -5,29 +5,30 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sync"
 	"time"
 
 	"skipjd/internal/gamejob"
 	"skipjd/internal/model"
 	"skipjd/internal/repository"
+
+	"golang.org/x/sync/errgroup"
 )
 
 const (
-	appName           = gamejob.SourceName
-	detailWorkerCount = 5
+	appName = gamejob.SourceName
 )
 
 type collectFunc func(ctx context.Context, opts gamejob.ScrapeOptions) ([]gamejob.ScrapedPosting, error)
 type detailCollectFunc func(ctx context.Context, postingURL string) (gamejob.DetailContent, error)
 
 type Crawler struct {
-	out         io.Writer
-	progressOut io.Writer
+	out               io.Writer
+	progressOut       io.Writer
 
 	crawlerRepository crawlRunRepository
 	collect           collectFunc
 	collectDetail     detailCollectFunc
+	detailWorkerCount int
 	now               func() time.Time
 }
 
@@ -65,6 +66,14 @@ func WithDetailCollector(detail detailCollectFunc) Option {
 	}
 }
 
+func WithDetailWorkers(workers int) Option {
+	return func(c *Crawler) {
+		if workers > 0 {
+			c.detailWorkerCount = workers
+		}
+	}
+}
+
 func newCrawler(
 	crawlerRepository crawlRunRepository,
 	collect collectFunc,
@@ -82,6 +91,7 @@ func newCrawler(
 		progressOut:       io.Discard,
 		crawlerRepository: crawlerRepository,
 		collect:           collect,
+		detailWorkerCount: 5,
 		now:               time.Now,
 	}
 
@@ -93,8 +103,14 @@ func newCrawler(
 }
 
 func NewCrawler(out io.Writer, crawlerRepository *repository.CrawlerRepository) (*Crawler, error) {
-	scraper := gamejob.NewClientScraper(nil)
-	detailScraper := gamejob.NewDetailScraper(nil)
+	scraper, err := gamejob.NewClientScraper(nil)
+	if err != nil {
+		return nil, fmt.Errorf("create client scraper: %w", err)
+	}
+	detailScraper, err := gamejob.NewDetailScraper(nil)
+	if err != nil {
+		return nil, fmt.Errorf("create detail scraper: %w", err)
+	}
 
 	return newCrawler(crawlerRepository, scraper.Scrape, WithOutput(out), WithDetailCollector(detailScraper.Scrape))
 }
@@ -151,13 +167,30 @@ func (c *Crawler) Run(ctx context.Context) error {
 	return nil
 }
 
-func Run(ctx context.Context, crawlerRepository *repository.CrawlerRepository) error {
-	scraper := gamejob.NewClientScraper(nil)
-	detailScraper := gamejob.NewDetailScraper(nil)
+type RunOptions struct {
+	DetailWorkers  int
+	AttemptTimeout time.Duration
+}
+
+func Run(ctx context.Context, crawlerRepository *repository.CrawlerRepository, opts RunOptions) error {
+	scraper, err := gamejob.NewClientScraper(nil)
+	if err != nil {
+		return fmt.Errorf("create client scraper: %w", err)
+	}
+	if opts.AttemptTimeout > 0 {
+		scraper.SetAttemptTimeout(opts.AttemptTimeout)
+	}
+
+	detailScraper, err := gamejob.NewDetailScraper(nil)
+	if err != nil {
+		return fmt.Errorf("create detail scraper: %w", err)
+	}
+
 	crawler, err := newCrawler(crawlerRepository, scraper.Scrape,
 		WithOutput(os.Stdout),
 		WithProgressOutput(os.Stderr),
 		WithDetailCollector(detailScraper.Scrape),
+		WithDetailWorkers(opts.DetailWorkers),
 	)
 	if err != nil {
 		return err
@@ -188,24 +221,21 @@ func (c *Crawler) enrichWithDetail(ctx context.Context, postings []model.JobPost
 		err       error
 	}
 
-	sem := make(chan struct{}, detailWorkerCount)
 	resultsChan := make(chan result, len(postings))
-	var wg sync.WaitGroup
+	eg, egCtx := errgroup.WithContext(ctx)
+	eg.SetLimit(c.detailWorkerCount)
 
 	for _, posting := range postings {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			content, err := c.collectDetail(ctx, posting.URL)
-			resultsChan <- result{sourceKey: posting.SourceKey, content: content, err: err}
-		}()
+		p := posting
+		eg.Go(func() error {
+			content, err := c.collectDetail(egCtx, p.URL)
+			resultsChan <- result{sourceKey: p.SourceKey, content: content, err: err}
+			return nil // Never return error to prevent errgroup from aborting
+		})
 	}
 
 	go func() {
-		wg.Wait()
+		_ = eg.Wait()
 		close(resultsChan)
 	}()
 

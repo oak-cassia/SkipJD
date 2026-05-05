@@ -33,7 +33,10 @@ func main() {
 		log.Fatalf("invalid --today-date: %v", err)
 	}
 
-	scraper := gamejob.NewClientScraper(nil)
+	scraper, err := gamejob.NewClientScraper(nil)
+	if err != nil {
+		log.Fatalf("failed to initialize scraper: %v", err)
+	}
 	postings, err := scraper.Scrape(context.Background(), gamejob.ScrapeOptions{
 		TodayDate: todayDate,
 		MaxPages:  *maxPagesFlag,

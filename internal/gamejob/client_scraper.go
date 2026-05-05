@@ -2,8 +2,10 @@ package gamejob
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -13,15 +15,21 @@ import (
 	"time"
 
 	"golang.org/x/net/html"
+
+	"skipjd/internal/retry"
 )
 
 const (
-	defaultBaseURL   = "https://www.gamejob.co.kr"
-	jobListPath      = "/Recruit/joblist"
-	jobListAjaxPath  = "/Recruit/_GI_Job_List/"
-	defaultUserAgent = "Mozilla/5.0"
-	DefaultMaxPages  = 10
-	SourceName       = "browser_agent"
+	defaultBaseURL        = "https://www.gamejob.co.kr"
+	jobListPath           = "/Recruit/joblist"
+	jobListAjaxPath       = "/Recruit/_GI_Job_List/"
+	defaultUserAgent      = "Mozilla/5.0"
+	DefaultMaxPages       = 10
+	SourceName            = "browser_agent"
+	defaultClientTimeout  = 30 * time.Second
+	defaultAttemptTimeout = 15 * time.Second
+	httpRetryAttempts     = 3
+	httpRetryBaseDelay    = 500 * time.Millisecond
 )
 
 var defaultDutyCodes = []int{1, 3, 16}
@@ -57,10 +65,11 @@ type ScrapeOptions struct {
 }
 
 type ClientScraper struct {
-	client  *http.Client
-	baseURL *url.URL
-	now     func() time.Time
-	loc     *time.Location
+	client         *http.Client
+	baseURL        *url.URL
+	now            func() time.Time
+	loc            *time.Location
+	attemptTimeout time.Duration
 }
 
 type listPage struct {
@@ -77,9 +86,9 @@ type listRow struct {
 	modifyText  string
 }
 
-func NewClientScraper(client *http.Client) *ClientScraper {
+func NewClientScraper(client *http.Client) (*ClientScraper, error) {
 	if client == nil {
-		client = &http.Client{Timeout: 20 * time.Second}
+		client = &http.Client{Timeout: defaultClientTimeout}
 	}
 
 	loc, err := time.LoadLocation("Asia/Seoul")
@@ -89,15 +98,26 @@ func NewClientScraper(client *http.Client) *ClientScraper {
 
 	baseURL, err := url.Parse(defaultBaseURL)
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("parse default base url: %w", err)
 	}
 
 	return &ClientScraper{
-		client:  client,
-		baseURL: baseURL,
-		now:     time.Now,
-		loc:     loc,
+		client:         client,
+		baseURL:        baseURL,
+		now:            time.Now,
+		loc:            loc,
+		attemptTimeout: defaultAttemptTimeout,
+	}, nil
+}
+
+// SetAttemptTimeout overrides the per-HTTP-attempt timeout (default 15s).
+// Zero or negative values restore the default.
+func (s *ClientScraper) SetAttemptTimeout(d time.Duration) {
+	if d <= 0 {
+		s.attemptTimeout = defaultAttemptTimeout
+		return
 	}
+	s.attemptTimeout = d
 }
 
 func (s *ClientScraper) Scrape(ctx context.Context, opts ScrapeOptions) ([]ScrapedPosting, error) {
@@ -195,36 +215,87 @@ func (s *ClientScraper) fetchPage(ctx context.Context, dutyCode int, page int) (
 	form.Set("pagesize", "40")
 	form.Set("tabcode", "1")
 
-	requestURL := s.baseURL.ResolveReference(&url.URL{Path: jobListAjaxPath})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL.String(), strings.NewReader(form.Encode()))
+	requestURL := s.baseURL.ResolveReference(&url.URL{Path: jobListAjaxPath}).String()
+	encodedForm := form.Encode()
+
+	var body string
+	err := retry.Do(ctx, httpRetryAttempts, httpRetryBaseDelay,
+		func(attemptCtx context.Context) error {
+			attemptCtx, cancel := context.WithTimeout(attemptCtx, s.attemptTimeout)
+			defer cancel()
+
+			req, err := http.NewRequestWithContext(attemptCtx, http.MethodPost, requestURL, strings.NewReader(encodedForm))
+			if err != nil {
+				return permanentErr{fmt.Errorf("build request for page %d: %w", page, err)}
+			}
+
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.Header.Set("User-Agent", defaultUserAgent)
+			req.Header.Set("X-Requested-With", "XMLHttpRequest")
+			req.Header.Set("Origin", s.origin())
+			req.Header.Set("Referer", s.refererURL(dutyCode))
+
+			resp, err := s.client.Do(req)
+			if err != nil {
+				return fmt.Errorf("fetch page %d: %w", page, err)
+			}
+			defer func(closer io.ReadCloser) { _ = closer.Close() }(resp.Body)
+
+			if resp.StatusCode != http.StatusOK {
+				return statusErr{status: resp.StatusCode, msg: fmt.Sprintf("fetch page %d: unexpected status %s", page, resp.Status)}
+			}
+
+			payload, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return fmt.Errorf("read page %d: %w", page, err)
+			}
+			body = string(payload)
+			return nil
+		},
+		isRetryableHTTP,
+	)
 	if err != nil {
-		return "", fmt.Errorf("build request for page %d: %w", page, err)
+		return "", err
 	}
+	return body, nil
+}
 
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("User-Agent", defaultUserAgent)
-	req.Header.Set("X-Requested-With", "XMLHttpRequest")
-	req.Header.Set("Origin", s.origin())
-	req.Header.Set("Referer", s.refererURL(dutyCode))
+// permanentErr marks a non-retryable error (request build failure, etc).
+type permanentErr struct{ error }
 
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("fetch page %d: %w", page, err)
+// statusErr captures a non-2xx HTTP response so isRetryableHTTP can inspect
+// the status code without parsing strings.
+type statusErr struct {
+	status int
+	msg    string
+}
+
+func (e statusErr) Error() string { return e.msg }
+
+func isRetryableHTTP(err error) bool {
+	if err == nil {
+		return false
 	}
-	defer func(Body io.ReadCloser) {
-		_ = Body.Close()
-	}(resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("fetch page %d: unexpected status %s", page, resp.Status)
+	var perm permanentErr
+	if errors.As(err, &perm) {
+		return false
 	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("read page %d: %w", page, err)
+	var s statusErr
+	if errors.As(err, &s) {
+		switch {
+		case s.status == http.StatusRequestTimeout, s.status == http.StatusTooManyRequests:
+			return true
+		case s.status >= 500 && s.status <= 599:
+			return true
+		default:
+			return false
+		}
 	}
-
-	return string(body), nil
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr)
 }
 
 func (s *ClientScraper) parseListPage(htmlText string, currentPage int) (listPage, error) {

@@ -11,7 +11,12 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync/atomic"
+	"time"
 
+	"golang.org/x/sync/errgroup"
+
+	"skipjd/internal/geminiexec"
 	"skipjd/internal/repository"
 )
 
@@ -21,15 +26,21 @@ const Model = "gemini-2.5-pro"
 
 // Options bundles the CLI flags the cmd entry point passes through.
 type Options struct {
-	Limit    int
-	Offset   int
-	DebugDir string
+	Limit         int
+	Offset        int
+	DebugDir      string
+	Workers       int
+	GeminiTimeout time.Duration
 }
 
-// Run processes up to opts.Limit pending bodies sequentially. Per-row
-// failures are logged and skipped — the next batch run will retry naturally
+// Run processes up to opts.Limit pending bodies.
+// Failures are logged and skipped — the next batch run will retry naturally
 // because no failure state is persisted.
 func Run(ctx context.Context, repo *repository.CrawlerRepository, opts Options) error {
+	if err := geminiexec.EnsureAvailable(); err != nil {
+		return err
+	}
+
 	pending, err := repo.FetchPendingExtractions(ctx, opts.Limit, opts.Offset)
 	if err != nil {
 		return fmt.Errorf("fetch pending: %w", err)
@@ -42,21 +53,37 @@ func Run(ctx context.Context, repo *repository.CrawlerRepository, opts Options) 
 		}
 	}
 
-	success, failed := 0, 0
-	for _, body := range pending {
-		if processBody(ctx, repo, body, opts.DebugDir) {
-			success++
-		} else {
-			failed++
-		}
+	var success, failed atomic.Int64
+
+	workers := opts.Workers
+	if workers <= 0 {
+		workers = 3
 	}
 
-	log.Printf("done success=%d failed=%d total=%d", success, failed, len(pending))
+	eg, egCtx := errgroup.WithContext(ctx)
+	eg.SetLimit(workers)
+
+	for _, body := range pending {
+		b := body
+		eg.Go(func() error {
+			if processBody(egCtx, repo, b, opts) {
+				success.Add(1)
+			} else {
+				failed.Add(1)
+			}
+			return nil
+		})
+	}
+
+	_ = eg.Wait()
+
+	log.Printf("done success=%d failed=%d total=%d", success.Load(), failed.Load(), len(pending))
 	return nil
 }
 
-func processBody(ctx context.Context, repo *repository.CrawlerRepository, body repository.PendingBody, debugDir string) bool {
-	raw, err := callGemini(ctx, body.Text, body.JobPostingID, debugDir)
+// TODO: extract gemini call as injectable for unit tests
+func processBody(ctx context.Context, repo *repository.CrawlerRepository, body repository.PendingBody, opts Options) bool {
+	raw, err := callGemini(ctx, body.Text, body.JobPostingID, opts.DebugDir, opts.GeminiTimeout)
 	if err != nil {
 		log.Printf("gemini failed posting_id=%d err=%v", body.JobPostingID, err)
 		return false
@@ -65,6 +92,7 @@ func processBody(ctx context.Context, repo *repository.CrawlerRepository, body r
 	result, err := parseResponse(raw)
 	if err != nil {
 		log.Printf("parse failed posting_id=%d preview=%q", body.JobPostingID, previewLine(raw, 120))
+		// TODO: route to DLQ table once it exists
 		return false
 	}
 

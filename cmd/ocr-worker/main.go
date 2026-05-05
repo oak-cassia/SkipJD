@@ -26,11 +26,21 @@ import (
 func main() {
 	limit := flag.Int("limit", 50, "max postings per run")
 	offset := flag.Int("offset", 0, "skip the first N postings (useful for debugging)")
-	minOCRChars := flag.Int("min-ocr-chars", 20, "discard image OCR result shorter than this many chars")
-	debugDir := flag.String("debug-dir", "", "directory to save downloaded images and OCR texts for debugging")
+	minChars := flag.Int("min-ocr-chars", 20, "skip OCR results shorter than this length (assumes failure/garbage)")
+	debugDir := flag.String("debug-dir", "", "directory to retain image and OCR text files instead of using temp files")
+	workers := flag.Int("workers", 3, "Number of concurrent OCR worker routines")
+	geminiTimeout := flag.Duration("gemini-timeout", 0, "Timeout per gemini call (0 = default)")
+	deadline := flag.Duration("deadline", 0, "Max duration for the ocr-worker batch (0 = no deadline)")
 	flag.Parse()
 
 	_ = godotenv.Load()
+
+	ctx := context.Background()
+	if *deadline > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, *deadline)
+		defer cancel()
+	}
 
 	db, err := database.NewGormDB(config.LoadDatabaseConfig())
 	if err != nil {
@@ -38,12 +48,14 @@ func main() {
 	}
 
 	repo := repository.NewCrawlerRepository(db)
-	if err := ocrworker.Run(context.Background(), repo, ocrworker.Options{
-		Limit:       *limit,
-		Offset:      *offset,
-		MinOCRChars: *minOCRChars,
-		DebugDir:    *debugDir,
+	if err := ocrworker.Run(ctx, repo, ocrworker.Options{
+		Limit:         *limit,
+		Offset:        *offset,
+		MinOCRChars:   *minChars,
+		DebugDir:      *debugDir,
+		Workers:       *workers,
+		GeminiTimeout: *geminiTimeout,
 	}); err != nil {
-		log.Fatalf("ocr-worker failed: %v", err)
+		log.Fatalf("ocr worker failed: %v", err)
 	}
 }

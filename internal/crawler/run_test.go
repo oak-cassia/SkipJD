@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -399,6 +400,42 @@ func TestPersistCrawlResultsStoresPostingsAndCreatesRun(t *testing.T) {
 
 func timePtr(t time.Time) *time.Time {
 	return &t
+}
+
+func TestEnrichWithDetailHonorsWorkerLimit(t *testing.T) {
+	const workers = 2
+	const total = 10
+
+	var inFlight, peak atomic.Int32
+	collectDetail := func(ctx context.Context, _ string) (gamejob.DetailContent, error) {
+		current := inFlight.Add(1)
+		for {
+			p := peak.Load()
+			if current <= p || peak.CompareAndSwap(p, current) {
+				break
+			}
+		}
+		// Hold the slot long enough that the limit is observable.
+		time.Sleep(20 * time.Millisecond)
+		inFlight.Add(-1)
+		return gamejob.DetailContent{TextContent: "ok"}, nil
+	}
+
+	crawler, err := newCrawler(&stubCrawlRunRepository{}, noopCollect,
+		WithDetailCollector(collectDetail),
+		WithDetailWorkers(workers),
+	)
+	require.NoError(t, err)
+
+	postings := make([]model.JobPosting, total)
+	for i := range postings {
+		postings[i] = model.JobPosting{SourceKey: "k" + string(rune('0'+i)), URL: "http://example.test"}
+	}
+
+	out := crawler.enrichWithDetail(context.Background(), postings)
+	assert.Len(t, out, total, "all postings should produce content")
+	assert.LessOrEqual(t, peak.Load(), int32(workers),
+		"at most %d concurrent collectDetail calls, got peak=%d", workers, peak.Load())
 }
 
 func newTestCrawler(

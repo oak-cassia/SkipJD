@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -11,6 +12,8 @@ import (
 	"time"
 
 	"golang.org/x/net/html"
+
+	"skipjd/internal/retry"
 )
 
 const (
@@ -39,21 +42,38 @@ type DetailContent struct {
 }
 
 type DetailScraper struct {
-	client  *http.Client
-	baseURL *url.URL
+	client         *http.Client
+	baseURL        *url.URL
+	logf           func(string, ...any)
+	attemptTimeout time.Duration
 }
 
-func NewDetailScraper(client *http.Client) *DetailScraper {
+func NewDetailScraper(client *http.Client) (*DetailScraper, error) {
 	if client == nil {
-		client = &http.Client{Timeout: 20 * time.Second}
+		client = &http.Client{Timeout: defaultClientTimeout}
 	}
 
 	baseURL, err := url.Parse(defaultBaseURL)
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("parse default base url: %w", err)
 	}
 
-	return &DetailScraper{client: client, baseURL: baseURL}
+	return &DetailScraper{
+		client:         client,
+		baseURL:        baseURL,
+		logf:           log.Printf,
+		attemptTimeout: defaultAttemptTimeout,
+	}, nil
+}
+
+// SetAttemptTimeout overrides the per-HTTP-attempt timeout (default 15s).
+// Zero or negative values restore the default.
+func (s *DetailScraper) SetAttemptTimeout(d time.Duration) {
+	if d <= 0 {
+		s.attemptTimeout = defaultAttemptTimeout
+		return
+	}
+	s.attemptTimeout = d
 }
 
 // Scrape fetches both iframe bodies for a posting URL and returns the merged
@@ -76,6 +96,7 @@ func (s *DetailScraper) Scrape(ctx context.Context, postingURL string) (DetailCo
 
 	secondary, err := s.fetchAndExtract(ctx, giNo, detailGICommentIframePath)
 	if err != nil {
+		s.logf("detail secondary iframe failed gi_no=%s err=%v (returning primary only)", giNo, err)
 		return primary, nil
 	}
 
@@ -120,29 +141,43 @@ func mergeDetails(primary, secondary DetailContent) DetailContent {
 }
 
 func (s *DetailScraper) fetchIframe(ctx context.Context, iframeURL string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, iframeURL, nil)
-	if err != nil {
-		return "", fmt.Errorf("build iframe request: %w", err)
-	}
-	req.Header.Set("User-Agent", defaultUserAgent)
+	var bodyString string
+	err := retry.Do(ctx, httpRetryAttempts, httpRetryBaseDelay,
+		func(attemptCtx context.Context) error {
+			attemptCtx, cancel := context.WithTimeout(attemptCtx, s.attemptTimeout)
+			defer cancel()
 
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("fetch iframe: %w", err)
-	}
-	defer func(Body io.ReadCloser) {
-		_ = Body.Close()
-	}(resp.Body)
+			req, err := http.NewRequestWithContext(attemptCtx, http.MethodGet, iframeURL, nil)
+			if err != nil {
+				return permanentErr{fmt.Errorf("build iframe request: %w", err)}
+			}
+			req.Header.Set("User-Agent", defaultUserAgent)
 
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("fetch iframe: unexpected status %s", resp.Status)
-	}
+			resp, err := s.client.Do(req)
+			if err != nil {
+				return fmt.Errorf("fetch iframe: %w", err)
+			}
+			defer func(Body io.ReadCloser) {
+				_ = Body.Close()
+			}(resp.Body)
 
-	body, err := io.ReadAll(resp.Body)
+			if resp.StatusCode != http.StatusOK {
+				return statusErr{status: resp.StatusCode, msg: fmt.Sprintf("fetch iframe: unexpected status %s", resp.Status)}
+			}
+
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return fmt.Errorf("read iframe body: %w", err)
+			}
+			bodyString = string(body)
+			return nil
+		},
+		isRetryableHTTP,
+	)
 	if err != nil {
-		return "", fmt.Errorf("read iframe body: %w", err)
+		return "", err
 	}
-	return string(body), nil
+	return bodyString, nil
 }
 
 // ExtractDetail walks an iframe document and pulls text + non-blocklisted image URLs.

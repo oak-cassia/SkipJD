@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"skipjd/internal/retry"
 	"strings"
 	"time"
 )
@@ -30,7 +31,11 @@ const promptTemplate = `너는 한국어 채용공고에서 지원자에게 요�
 // callGemini writes the body text to a file (debugDir if set, otherwise a
 // tempfile) and invokes gemini-cli with the structured-extraction prompt.
 // Returns the trimmed stdout content.
-func callGemini(ctx context.Context, bodyText string, postingID uint, debugDir string) (string, error) {
+func callGemini(ctx context.Context, bodyText string, postingID uint, debugDir string, timeout time.Duration) (string, error) {
+	if timeout <= 0 {
+		timeout = geminiTimeout
+	}
+
 	bodyDir, bodyName, cleanup, err := stageBody(bodyText, postingID, debugDir)
 	if err != nil {
 		return "", err
@@ -39,29 +44,54 @@ func callGemini(ctx context.Context, bodyText string, postingID uint, debugDir s
 		defer func() { _ = os.Remove(cleanup) }()
 	}
 
-	cmdCtx, cancel := context.WithTimeout(ctx, geminiTimeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(cmdCtx,
-		"gemini",
-		"--skip-trust",
-		"-m", Model,
-		"-p", promptTemplate+"\n\n@"+bodyName,
-		"-o", "text",
-	)
-	cmd.Dir = bodyDir
-
 	var stdout strings.Builder
-	var stderr strings.Builder
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
 
-	runErr := cmd.Run()
-	if errors.Is(cmdCtx.Err(), context.DeadlineExceeded) {
-		return "", fmt.Errorf("gemini timeout posting_id=%d after=%s", postingID, geminiTimeout)
-	}
-	if runErr != nil {
-		return "", classifyGeminiError(runErr, stderr.String(), postingID)
+	err = retry.Do(ctx, 2, 2*time.Second,
+		func(attemptCtx context.Context) error {
+			cmdCtx, cancel := context.WithTimeout(attemptCtx, timeout)
+			defer cancel()
+
+			cmd := exec.CommandContext(cmdCtx,
+				"gemini",
+				"--skip-trust",
+				"-m", Model,
+				"-p", promptTemplate+"\n\n@"+bodyName,
+				"-o", "text",
+			)
+			cmd.Dir = bodyDir
+
+			stdout.Reset()
+			var stderr strings.Builder
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+
+			runErr := cmd.Run()
+			if errors.Is(cmdCtx.Err(), context.DeadlineExceeded) {
+				return fmt.Errorf("gemini timeout posting_id=%d after=%s", postingID, timeout)
+			}
+			if runErr != nil {
+				return classifyGeminiError(runErr, stderr.String(), postingID)
+			}
+			return nil
+		},
+		func(err error) bool {
+			if err == nil {
+				return false
+			}
+			if strings.Contains(err.Error(), "timeout") || errors.Is(err, context.DeadlineExceeded) {
+				return true
+			}
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				code := exitErr.ExitCode()
+				return code == 1 || code == 124 || code == 130
+			}
+			return false
+		},
+	)
+
+	if err != nil {
+		return "", err
 	}
 
 	return strings.TrimSpace(stdout.String()), nil

@@ -27,9 +27,19 @@ func main() {
 	limit := flag.Int("limit", 50, "max postings per run")
 	offset := flag.Int("offset", 0, "skip the first N postings (useful for debugging)")
 	debugDir := flag.String("debug-dir", "", "directory to retain body files instead of using temp files")
+	workers := flag.Int("workers", 3, "Number of concurrent gemini calls")
+	geminiTimeout := flag.Duration("gemini-timeout", 0, "Timeout per gemini call (0 = default)")
+	deadline := flag.Duration("deadline", 0, "Max duration for the extractor batch (0 = no deadline)")
 	flag.Parse()
 
 	_ = godotenv.Load()
+
+	ctx := context.Background()
+	if *deadline > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, *deadline)
+		defer cancel()
+	}
 
 	db, err := database.NewGormDB(config.LoadDatabaseConfig())
 	if err != nil {
@@ -37,10 +47,12 @@ func main() {
 	}
 
 	repo := repository.NewCrawlerRepository(db)
-	if err := extractor.Run(context.Background(), repo, extractor.Options{
-		Limit:    *limit,
-		Offset:   *offset,
-		DebugDir: *debugDir,
+	if err := extractor.Run(ctx, repo, extractor.Options{
+		Limit:         *limit,
+		Offset:        *offset,
+		DebugDir:      *debugDir,
+		Workers:       *workers,
+		GeminiTimeout: *geminiTimeout,
 	}); err != nil {
 		log.Fatalf("extractor failed: %v", err)
 	}

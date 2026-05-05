@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -99,7 +100,7 @@ func TestDetailScraperFetchesBothIframesAndMerges(t *testing.T) {
 	}))
 	defer server.Close()
 
-	scraper := NewDetailScraper(server.Client())
+	scraper := NewDetailScraper_Must(server.Client())
 	parsed, err := url.Parse(server.URL)
 	require.NoError(t, err)
 	scraper.baseURL = parsed
@@ -115,6 +116,44 @@ func TestDetailScraperFetchesBothIframesAndMerges(t *testing.T) {
 	assert.Contains(t, content.TextContent, "[지원자격]")
 	assert.Contains(t, content.TextContent, "5년 이상의 서버 개발 경험")
 	require.Len(t, content.ImageURLs, 1)
+}
+
+func TestDetailScraperRetriesOnTransient5xx(t *testing.T) {
+	var primaryAttempts, secondaryAttempts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/Recruit/GI_Read_Comt_Ifrm":
+			primaryAttempts++
+			if primaryAttempts < 3 {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			body, err := os.ReadFile("testdata/detail_image.html")
+			require.NoError(t, err)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(body)
+		case "/Recruit/GI_Read_GI_Comment_Ifrm":
+			secondaryAttempts++
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`<html><body>5년 이상</body></html>`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	scraper := NewDetailScraper_Must(server.Client())
+	scraper.attemptTimeout = 2 * time.Second // tighten so test is fast even on retry path
+	parsed, err := url.Parse(server.URL)
+	require.NoError(t, err)
+	scraper.baseURL = parsed
+
+	content, err := scraper.Scrape(context.Background(),
+		"https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No=278459")
+	require.NoError(t, err)
+	assert.Equal(t, 3, primaryAttempts, "primary should retry twice and succeed on attempt 3")
+	assert.Equal(t, 1, secondaryAttempts)
+	assert.Contains(t, content.TextContent, "5년 이상")
 }
 
 func TestDetailScraperGracefullyFallsBackWhenSecondaryIframeFails(t *testing.T) {
@@ -133,7 +172,7 @@ func TestDetailScraperGracefullyFallsBackWhenSecondaryIframeFails(t *testing.T) 
 	}))
 	defer server.Close()
 
-	scraper := NewDetailScraper(server.Client())
+	scraper := NewDetailScraper_Must(server.Client())
 	parsed, err := url.Parse(server.URL)
 	require.NoError(t, err)
 	scraper.baseURL = parsed
@@ -164,3 +203,10 @@ func imageNode(t *testing.T, snippet string) *html.Node {
 	return found
 }
 
+func NewDetailScraper_Must(client *http.Client) *DetailScraper {
+	s, err := NewDetailScraper(client)
+	if err != nil {
+		panic(err)
+	}
+	return s
+}

@@ -173,7 +173,7 @@ func TestScrapeStopsAtCutoffCallback(t *testing.T) {
 		}),
 	}
 
-	scraper := NewClientScraper(client)
+	scraper := NewClientScraper_Must(client)
 	scraper.baseURL = mustParseURL(t, "https://www.gamejob.co.kr")
 	scraper.now = func() time.Time {
 		return time.Date(2026, 4, 7, 9, 0, 0, 0, scraper.loc)
@@ -248,7 +248,7 @@ func TestScrapeStopsAtDefaultMaxPages(t *testing.T) {
 		}),
 	}
 
-	scraper := NewClientScraper(client)
+	scraper := NewClientScraper_Must(client)
 	scraper.now = func() time.Time {
 		return time.Date(2026, 4, 7, 9, 0, 0, 0, scraper.loc)
 	}
@@ -277,7 +277,7 @@ func TestScrapeStopsOnEmptyPage(t *testing.T) {
 		}),
 	}
 
-	scraper := NewClientScraper(client)
+	scraper := NewClientScraper_Must(client)
 	postings, err := scraper.Scrape(context.Background(), ScrapeOptions{
 		TodayDate: time.Date(2026, 4, 7, 0, 0, 0, 0, scraper.loc),
 		MaxPages:  3,
@@ -306,7 +306,7 @@ func TestScrapeStopsWhenPaginationEnds(t *testing.T) {
 		}),
 	}
 
-	scraper := NewClientScraper(client)
+	scraper := NewClientScraper_Must(client)
 	postings, err := scraper.Scrape(context.Background(), ScrapeOptions{
 		TodayDate: time.Date(2026, 4, 7, 0, 0, 0, 0, scraper.loc),
 		MaxPages:  3,
@@ -358,7 +358,7 @@ func TestScrapeWithoutStopContinuesPastOlderRows(t *testing.T) {
 		}),
 	}
 
-	scraper := NewClientScraper(client)
+	scraper := NewClientScraper_Must(client)
 	scraper.now = func() time.Time {
 		return time.Date(2026, 4, 7, 9, 0, 0, 0, scraper.loc)
 	}
@@ -396,7 +396,7 @@ func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error)
 }
 
 func newTestScraper() *ClientScraper {
-	scraper := NewClientScraper(nil)
+	scraper := NewClientScraper_Must(nil)
 	scraper.now = func() time.Time {
 		return time.Date(2026, 4, 7, 9, 0, 0, 0, scraper.loc)
 	}
@@ -461,4 +461,12 @@ func htmlResponse(request *http.Request, body string) *http.Response {
 		Body:    io.NopCloser(strings.NewReader(body)),
 		Request: request,
 	}
+}
+
+func NewClientScraper_Must(client *http.Client) *ClientScraper {
+	s, err := NewClientScraper(client)
+	if err != nil {
+		panic(err)
+	}
+	return s
 }
