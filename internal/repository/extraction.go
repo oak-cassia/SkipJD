@@ -27,12 +27,12 @@ func (r *CrawlerRepository) FetchPendingExtractions(ctx context.Context, limit, 
 	err := r.db.WithContext(ctx).
 		Table("job_posting_bodies").
 		Select(
-			"job_posting_bodies.job_posting_id AS job_posting_id, " +
-				"job_posting_bodies.text AS text, " +
+			"job_posting_bodies.job_posting_id AS job_posting_id, "+
+				"job_posting_bodies.text AS text, "+
 				"job_posting_bodies.updated_at AS body_updated_at",
 		).
 		Joins(
-			"LEFT JOIN job_posting_extractions " +
+			"LEFT JOIN job_posting_extractions "+
 				"ON job_posting_extractions.job_posting_id = job_posting_bodies.job_posting_id",
 		).
 		Where("job_posting_bodies.ready_for_llm = ?", true).

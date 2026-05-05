@@ -94,7 +94,7 @@ func sendSMTPMail(ctx context.Context, config SMTPConfig, msg []byte) error {
 	if err != nil {
 		return fmt.Errorf("dial smtp server %s: %w", addr, err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	stop := closeConnOnContextDone(ctx, conn)
 	defer stop()
@@ -107,7 +107,7 @@ func sendSMTPMail(ctx context.Context, config SMTPConfig, msg []byte) error {
 	if err != nil {
 		return fmt.Errorf("create smtp client: %w", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	ok, _ := client.Extension("STARTTLS")
 	if !ok {

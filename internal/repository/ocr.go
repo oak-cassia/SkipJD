@@ -22,7 +22,7 @@ func (r *CrawlerRepository) FetchPendingOCRPostingIDs(ctx context.Context, limit
 	err := r.db.WithContext(ctx).
 		Table("job_posting_images").
 		Select(
-			"DISTINCT job_posting_images.job_posting_id AS job_posting_id, " +
+			"DISTINCT job_posting_images.job_posting_id AS job_posting_id, "+
 				"job_postings.last_seen_at AS last_seen_at",
 		).
 		Joins("JOIN job_postings ON job_postings.id = job_posting_images.job_posting_id").
