@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"log"
+	"os"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -11,6 +12,7 @@ import (
 	"skipjd/internal/config"
 	"skipjd/internal/crawler"
 	"skipjd/internal/database"
+	"skipjd/internal/gamejob"
 	"skipjd/internal/model"
 	"skipjd/internal/repository"
 )
@@ -50,12 +52,27 @@ func main() {
 
 	crawlerRepository := repository.NewCrawlerRepository(db)
 
-	opts := crawler.RunOptions{
-		DetailWorkers:  *detailWorkers,
-		AttemptTimeout: *httpTimeout,
+	scraper, err := gamejob.NewClientScraper(gamejob.WithAttemptTimeout(*httpTimeout))
+	if err != nil {
+		log.Fatalf("failed to create client scraper: %v", err)
+	}
+	detailScraper, err := gamejob.NewDetailScraper(nil)
+	if err != nil {
+		log.Fatalf("failed to create detail scraper: %v", err)
 	}
 
-	if err := crawler.Run(ctx, crawlerRepository, opts); err != nil {
+	c, err := crawler.NewCrawler(crawlerRepository,
+		crawler.WithOutput(os.Stdout),
+		crawler.WithProgressOutput(os.Stderr),
+		crawler.WithCollector(scraper.Scrape),
+		crawler.WithDetailCollector(detailScraper.Scrape),
+		crawler.WithDetailWorkers(*detailWorkers),
+	)
+	if err != nil {
+		log.Fatalf("failed to create crawler: %v", err)
+	}
+
+	if err := c.Run(ctx); err != nil {
 		log.Fatalf("failed to run crawler: %v", err)
 	}
 }

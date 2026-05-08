@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"time"
 
 	"skipjd/internal/gamejob"
@@ -38,6 +37,15 @@ func WithOutput(out io.Writer) Option {
 	return func(c *Crawler) {
 		if out != nil {
 			c.out = out
+		}
+	}
+}
+
+// WithCollector injects the listing collector (typically gamejob ClientScraper.Scrape).
+func WithCollector(collect collectFunc) Option {
+	return func(c *Crawler) {
+		if collect != nil {
+			c.collect = collect
 		}
 	}
 }
@@ -102,17 +110,28 @@ func newCrawler(
 	return c, nil
 }
 
-func NewCrawler(out io.Writer, crawlerRepository *repository.CrawlerRepository) (*Crawler, error) {
-	scraper, err := gamejob.NewClientScraper()
-	if err != nil {
-		return nil, fmt.Errorf("create client scraper: %w", err)
-	}
-	detailScraper, err := gamejob.NewDetailScraper(nil)
-	if err != nil {
-		return nil, fmt.Errorf("create detail scraper: %w", err)
+func NewCrawler(crawlerRepository *repository.CrawlerRepository, opts ...Option) (*Crawler, error) {
+	if crawlerRepository == nil {
+		return nil, fmt.Errorf("crawler repository is required")
 	}
 
-	return newCrawler(crawlerRepository, scraper.Scrape, WithOutput(out), WithDetailCollector(detailScraper.Scrape))
+	c := &Crawler{
+		out:               io.Discard,
+		progressOut:       io.Discard,
+		crawlerRepository: crawlerRepository,
+		detailWorkerCount: 5,
+		now:               time.Now,
+	}
+
+	for _, opt := range opts {
+		opt(c)
+	}
+
+	if c.collect == nil {
+		return nil, fmt.Errorf("crawler collector is required (use WithCollector)")
+	}
+
+	return c, nil
 }
 
 func (c *Crawler) Run(ctx context.Context) error {
@@ -165,35 +184,6 @@ func (c *Crawler) Run(ctx context.Context) error {
 	}
 
 	return nil
-}
-
-type RunOptions struct {
-	DetailWorkers  int
-	AttemptTimeout time.Duration
-}
-
-func Run(ctx context.Context, crawlerRepository *repository.CrawlerRepository, opts RunOptions) error {
-	scraper, err := gamejob.NewClientScraper(gamejob.WithAttemptTimeout(opts.AttemptTimeout))
-	if err != nil {
-		return fmt.Errorf("create client scraper: %w", err)
-	}
-
-	detailScraper, err := gamejob.NewDetailScraper(nil)
-	if err != nil {
-		return fmt.Errorf("create detail scraper: %w", err)
-	}
-
-	crawler, err := newCrawler(crawlerRepository, scraper.Scrape,
-		WithOutput(os.Stdout),
-		WithProgressOutput(os.Stderr),
-		WithDetailCollector(detailScraper.Scrape),
-		WithDetailWorkers(opts.DetailWorkers),
-	)
-	if err != nil {
-		return err
-	}
-
-	return crawler.Run(ctx)
 }
 
 func (c *Crawler) progressWriter() io.Writer {
