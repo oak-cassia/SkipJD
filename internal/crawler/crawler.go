@@ -103,7 +103,7 @@ func newCrawler(
 }
 
 func NewCrawler(out io.Writer, crawlerRepository *repository.CrawlerRepository) (*Crawler, error) {
-	scraper, err := gamejob.NewClientScraper(nil)
+	scraper, err := gamejob.NewClientScraper()
 	if err != nil {
 		return nil, fmt.Errorf("create client scraper: %w", err)
 	}
@@ -173,12 +173,9 @@ type RunOptions struct {
 }
 
 func Run(ctx context.Context, crawlerRepository *repository.CrawlerRepository, opts RunOptions) error {
-	scraper, err := gamejob.NewClientScraper(nil)
+	scraper, err := gamejob.NewClientScraper(gamejob.WithAttemptTimeout(opts.AttemptTimeout))
 	if err != nil {
 		return fmt.Errorf("create client scraper: %w", err)
-	}
-	if opts.AttemptTimeout > 0 {
-		scraper.SetAttemptTimeout(opts.AttemptTimeout)
 	}
 
 	detailScraper, err := gamejob.NewDetailScraper(nil)

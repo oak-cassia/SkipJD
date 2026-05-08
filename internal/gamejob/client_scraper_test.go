@@ -464,7 +464,7 @@ func htmlResponse(request *http.Request, body string) *http.Response {
 }
 
 func NewClientScraper_Must(client *http.Client) *ClientScraper {
-	s, err := NewClientScraper(client)
+	s, err := NewClientScraper(WithHTTPClient(client))
 	if err != nil {
 		panic(err)
 	}

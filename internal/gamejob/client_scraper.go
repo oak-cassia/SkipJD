@@ -86,11 +86,46 @@ type listRow struct {
 	modifyText  string
 }
 
-func NewClientScraper(client *http.Client) (*ClientScraper, error) {
-	if client == nil {
-		client = &http.Client{Timeout: defaultClientTimeout}
-	}
+type Option func(*ClientScraper)
 
+// WithHTTPClient overrides the underlying *http.Client. Nil is ignored.
+func WithHTTPClient(client *http.Client) Option {
+	return func(s *ClientScraper) {
+		if client != nil {
+			s.client = client
+		}
+	}
+}
+
+// WithAttemptTimeout overrides the per-HTTP-attempt timeout (default 15s).
+// Zero or negative values are ignored.
+func WithAttemptTimeout(d time.Duration) Option {
+	return func(s *ClientScraper) {
+		if d > 0 {
+			s.attemptTimeout = d
+		}
+	}
+}
+
+// WithLocation overrides the timezone used for date normalization.
+func WithLocation(loc *time.Location) Option {
+	return func(s *ClientScraper) {
+		if loc != nil {
+			s.loc = loc
+		}
+	}
+}
+
+// WithNowFunc overrides the time source. Useful in tests.
+func WithNowFunc(now func() time.Time) Option {
+	return func(s *ClientScraper) {
+		if now != nil {
+			s.now = now
+		}
+	}
+}
+
+func NewClientScraper(opts ...Option) (*ClientScraper, error) {
 	loc, err := time.LoadLocation("Asia/Seoul")
 	if err != nil {
 		loc = time.FixedZone("KST", 9*60*60)
@@ -101,23 +136,19 @@ func NewClientScraper(client *http.Client) (*ClientScraper, error) {
 		return nil, fmt.Errorf("parse default base url: %w", err)
 	}
 
-	return &ClientScraper{
-		client:         client,
+	s := &ClientScraper{
+		client:         &http.Client{Timeout: defaultClientTimeout},
 		baseURL:        baseURL,
 		now:            time.Now,
 		loc:            loc,
 		attemptTimeout: defaultAttemptTimeout,
-	}, nil
-}
-
-// SetAttemptTimeout overrides the per-HTTP-attempt timeout (default 15s).
-// Zero or negative values restore the default.
-func (s *ClientScraper) SetAttemptTimeout(d time.Duration) {
-	if d <= 0 {
-		s.attemptTimeout = defaultAttemptTimeout
-		return
 	}
-	s.attemptTimeout = d
+
+	for _, opt := range opts {
+		opt(s)
+	}
+
+	return s, nil
 }
 
 func (s *ClientScraper) Scrape(ctx context.Context, opts ScrapeOptions) ([]ScrapedPosting, error) {
