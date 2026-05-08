@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
-	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -23,14 +22,15 @@ func main() {
 		log.Fatalf("failed to load Asia/Seoul location: %v", err)
 	}
 
-	todayDateValue := strings.TrimSpace(*todayDateFlag)
-	if todayDateValue == "" {
-		todayDateValue = time.Now().In(loc).Format("2006-01-02")
-	}
-
-	todayDate, err := parseDate(todayDateValue, loc)
-	if err != nil {
-		log.Fatalf("invalid --today-date: %v", err)
+	var todayDate time.Time
+	if todayDateValue := strings.TrimSpace(*todayDateFlag); todayDateValue != "" {
+		todayDate, err = time.ParseInLocation("2006-01-02", todayDateValue, loc)
+		if err != nil {
+			log.Fatalf("invalid --today-date: %v", err)
+		}
+	} else {
+		now := time.Now().In(loc)
+		todayDate = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
 	}
 
 	scraper, err := gamejob.NewClientScraper(nil)
@@ -50,14 +50,6 @@ func main() {
 	if err := encoder.Encode(newOutput(postings, loc)); err != nil {
 		log.Fatalf("failed to encode output: %v", err)
 	}
-}
-
-func parseDate(value string, loc *time.Location) (time.Time, error) {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return time.Time{}, fmt.Errorf("value is required")
-	}
-	return time.ParseInLocation("2006-01-02", trimmed, loc)
 }
 
 type output struct {
