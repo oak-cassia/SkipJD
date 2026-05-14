@@ -4,9 +4,7 @@
 package extractor
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -81,32 +79,37 @@ func Run(ctx context.Context, repo *repository.CrawlerRepository, opts Options) 
 	return nil
 }
 
-// TODO: extract gemini call as injectable for unit tests
 func processBody(ctx context.Context, repo *repository.CrawlerRepository, body repository.PendingBody, opts Options) bool {
-	raw, err := callGemini(ctx, body.Text, body.JobPostingID, opts.DebugDir, opts.GeminiTimeout)
+	raw, err := geminiexec.Call(ctx, geminiexec.CallOptions{
+		Prompt:   promptTemplate,
+		Input:    body.Text,
+		Model:    Model,
+		Label:    fmt.Sprintf("posting_id=%d", body.JobPostingID),
+		DebugDir: opts.DebugDir,
+		Timeout:  opts.GeminiTimeout,
+	})
 	if err != nil {
 		log.Printf("gemini failed posting_id=%d err=%v", body.JobPostingID, err)
 		return false
 	}
 
-	result, err := parseResponse(raw)
+	result, err := geminiexec.ParseResponse(raw)
 	if err != nil {
 		log.Printf("parse failed posting_id=%d preview=%q", body.JobPostingID, previewLine(raw, 120))
-		// TODO: route to DLQ table once it exists
 		return false
 	}
 
-	expJSON, err := encodeArray(result.Experience)
+	expJSON, err := geminiexec.EncodeArray(result.Experience)
 	if err != nil {
 		log.Printf("encode experience posting_id=%d err=%v", body.JobPostingID, err)
 		return false
 	}
-	compJSON, err := encodeArray(result.Competency)
+	compJSON, err := geminiexec.EncodeArray(result.Competency)
 	if err != nil {
 		log.Printf("encode competency posting_id=%d err=%v", body.JobPostingID, err)
 		return false
 	}
-	traitJSON, err := encodeArray(result.Trait)
+	traitJSON, err := geminiexec.EncodeArray(result.Trait)
 	if err != nil {
 		log.Printf("encode trait posting_id=%d err=%v", body.JobPostingID, err)
 		return false
@@ -123,19 +126,6 @@ func processBody(ctx context.Context, repo *repository.CrawlerRepository, body r
 		return false
 	}
 	return true
-}
-
-// encodeArray emits a JSON array with UTF-8 preserved as-is and without
-// escaping HTML-unsafe ASCII (<, >, &), so the stored extraction reads the
-// same as the source body.
-func encodeArray(items []string) (string, error) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(items); err != nil {
-		return "", fmt.Errorf("marshal: %w", err)
-	}
-	return strings.TrimRight(buf.String(), "\n"), nil
 }
 
 func previewLine(s string, n int) string {

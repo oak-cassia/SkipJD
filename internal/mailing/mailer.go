@@ -10,11 +10,33 @@ import (
 	"strings"
 	"time"
 
+	"skipjd/internal/matcher"
 	"skipjd/internal/model"
 )
 
-type Mailer interface {
-	SendDigest(ctx context.Context, runAt time.Time, postings []model.JobPosting) error
+// ScoredPosting bundles a candidate JobPosting with its match score so the
+// mailer can render both the ranking and the per-category match reasoning.
+type ScoredPosting struct {
+	Posting model.JobPosting
+	Score   matcher.Score
+}
+
+// Section is one labeled group of postings inside a match digest body.
+// Used to separate "필수 (회사/직무/경력 매칭)" from "추천 (점수순)".
+// Sections with empty Items are skipped during rendering.
+type Section struct {
+	Title string
+	Items []ScoredPosting
+}
+
+// TotalItems reports how many ScoredPostings the sections contain in total.
+// Used by callers to decide whether the digest is worth sending at all.
+func TotalItems(sections []Section) int {
+	n := 0
+	for _, s := range sections {
+		n += len(s.Items)
+	}
+	return n
 }
 
 type SMTPConfig struct {
@@ -31,7 +53,7 @@ const (
 	smtpIOTimeout   = 15 * time.Second
 )
 
-type sendMailFunc func(ctx context.Context, config SMTPConfig, msg []byte) error
+type sendMailFunc func(ctx context.Context, config SMTPConfig, to string, msg []byte) error
 
 type SMTPMailer struct {
 	config   SMTPConfig
@@ -66,7 +88,90 @@ func (m *SMTPMailer) SendDigest(ctx context.Context, runAt time.Time, postings [
 		body,
 	}, "\r\n")
 
-	return m.sendMail(ctx, m.config, []byte(message))
+	return m.sendMail(ctx, m.config, m.config.To, []byte(message))
+}
+
+// SendMatchDigest sends a personalized digest containing one or more
+// labeled sections (typically "[필수]" and "[추천]"). Empty / all-empty
+// sections are a no-op. Within a section, items are rendered in the order
+// the caller supplied — sorting is the caller's responsibility.
+func (m *SMTPMailer) SendMatchDigest(ctx context.Context, to string, runAt time.Time, sections []Section) error {
+	total := TotalItems(sections)
+	if total == 0 {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	subject := fmt.Sprintf("SkipJD 추천 공고 %s (%d건)", runAt.Format("2006-01-02"), total)
+	body := BuildMatchDigestBody(sections)
+
+	message := strings.Join([]string{
+		fmt.Sprintf("From: %s", m.config.From),
+		fmt.Sprintf("To: %s", to),
+		fmt.Sprintf("Subject: %s", subject),
+		"MIME-Version: 1.0",
+		"Content-Type: text/plain; charset=UTF-8",
+		"",
+		body,
+	}, "\r\n")
+
+	return m.sendMail(ctx, m.config, to, []byte(message))
+}
+
+// BuildMatchDigestBody renders the plain-text body for a SendMatchDigest
+// payload. Exposed so callers can preview the output via --dry-run before
+// committing to sending.
+//
+// Sections with a non-empty Title are rendered with a header separator;
+// sections with an empty Title render their items directly. Empty sections
+// are skipped.
+func BuildMatchDigestBody(sections []Section) string {
+	var b strings.Builder
+	first := true
+	for _, sec := range sections {
+		if len(sec.Items) == 0 {
+			continue
+		}
+		if !first {
+			b.WriteString("\n")
+		}
+		first = false
+		if sec.Title != "" {
+			fmt.Fprintf(&b, "── %s ──\n\n", sec.Title)
+		}
+		renderItems(&b, sec.Items)
+	}
+	return b.String()
+}
+
+func renderItems(b *strings.Builder, items []ScoredPosting) {
+	for i, item := range items {
+		s := item.Score
+		fmt.Fprintf(b, "[%d] 점수 %d (경험:%d / 역량:%d / 성향:%d)\n",
+			i+1, s.Total, s.Experience.Hits, s.Competency.Hits, s.Trait.Hits)
+		fmt.Fprintf(b, "회사: %s\n", item.Posting.Company)
+		fmt.Fprintf(b, "제목: %s\n", item.Posting.Title)
+		fmt.Fprintf(b, "마감: %s\n", item.Posting.ClosingDate)
+		fmt.Fprintf(b, "URL: %s\n", item.Posting.URL)
+		if s.Total > 0 {
+			b.WriteString("매칭:\n")
+			writeCategory(b, "경험", s.Experience.Matched)
+			writeCategory(b, "역량", s.Competency.Matched)
+			writeCategory(b, "성향", s.Trait.Matched)
+		}
+		if i < len(items)-1 {
+			b.WriteString("\n")
+		}
+	}
+}
+
+func writeCategory(b *strings.Builder, label string, items []string) {
+	if len(items) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "  · %s: %s\n", label, strings.Join(items, ", "))
 }
 
 func buildDigestBody(postings []model.JobPosting) string {
@@ -86,7 +191,7 @@ func buildDigestBody(postings []model.JobPosting) string {
 	return b.String()
 }
 
-func sendSMTPMail(ctx context.Context, config SMTPConfig, msg []byte) error {
+func sendSMTPMail(ctx context.Context, config SMTPConfig, to string, msg []byte) error {
 	addr := net.JoinHostPort(config.Host, strconv.Itoa(config.Port))
 	dialer := net.Dialer{Timeout: smtpDialTimeout}
 
@@ -125,7 +230,7 @@ func sendSMTPMail(ctx context.Context, config SMTPConfig, msg []byte) error {
 	if err := client.Mail(config.From); err != nil {
 		return fmt.Errorf("set sender: %w", err)
 	}
-	if err := client.Rcpt(config.To); err != nil {
+	if err := client.Rcpt(to); err != nil {
 		return fmt.Errorf("set recipient: %w", err)
 	}
 

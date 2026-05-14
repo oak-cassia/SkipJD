@@ -50,6 +50,28 @@ func (r *CrawlerRepository) FetchPendingExtractions(ctx context.Context, limit, 
 	return rows, nil
 }
 
+// GetExtractionsByPostingIDs returns JobPostingExtraction rows keyed by
+// JobPostingID. Postings without an extraction row are simply absent from
+// the map (caller filters or scores them as zero).
+func (r *CrawlerRepository) GetExtractionsByPostingIDs(ctx context.Context, postingIDs []uint) (map[uint]model.JobPostingExtraction, error) {
+	if len(postingIDs) == 0 {
+		return map[uint]model.JobPostingExtraction{}, nil
+	}
+	rows := make([]model.JobPostingExtraction, 0, len(postingIDs))
+	if err := r.db.WithContext(ctx).
+		Where("job_posting_id IN ?", postingIDs).
+		Find(&rows).
+		Error; err != nil {
+		return nil, fmt.Errorf("get extractions by posting ids: %w", err)
+	}
+
+	out := make(map[uint]model.JobPostingExtraction, len(rows))
+	for _, row := range rows {
+		out[row.JobPostingID] = row
+	}
+	return out, nil
+}
+
 // UpsertJobPostingExtraction inserts or updates a JobPostingExtraction row
 // for the given posting. The experience/competency/trait arguments are JSON
 // strings already encoded by the caller; sourceBodyUpdatedAt is the source

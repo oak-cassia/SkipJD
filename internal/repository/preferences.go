@@ -29,10 +29,9 @@ func (r *PreferencesRepository) EnsureUser(ctx context.Context, id uint, email s
 	if err := r.db.WithContext(ctx).
 		Clauses(clause.OnConflict{DoNothing: true}).
 		Create(&model.User{
-			ID:       id,
-			Email:    email,
-			Password: "dummy_password",
-			Name:     "Test User",
+			ID:    id,
+			Email: email,
+			Name:  "Test User",
 		}).
 		Error; err != nil {
 		return nil, fmt.Errorf("ensure user: %w", err)

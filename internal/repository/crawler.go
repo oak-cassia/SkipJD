@@ -146,6 +146,22 @@ func (r *CrawlerRepository) UpsertJobPostings(ctx context.Context, postings []mo
 	})
 }
 
+// ListJobPostingsBySource returns all postings for a given source ordered
+// by LastSeenAt descending. Used as the fallback candidate list when a user
+// has no duty preferences set.
+func (r *CrawlerRepository) ListJobPostingsBySource(ctx context.Context, source string) ([]model.JobPosting, error) {
+	postings := make([]model.JobPosting, 0)
+	if err := r.db.WithContext(ctx).
+		Where("source = ?", source).
+		Order("last_seen_at DESC").
+		Order("id DESC").
+		Find(&postings).
+		Error; err != nil {
+		return nil, fmt.Errorf("list job postings by source: %w", err)
+	}
+	return postings, nil
+}
+
 func (r *CrawlerRepository) ListJobPostingsByDutyCodes(ctx context.Context, source string, dutyCodes []int) ([]model.JobPosting, error) {
 	if len(dutyCodes) == 0 {
 		return []model.JobPosting{}, nil

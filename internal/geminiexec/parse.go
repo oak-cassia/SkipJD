@@ -1,6 +1,7 @@
-package extractor
+package geminiexec
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,23 +14,29 @@ import (
 var fenceRE = regexp.MustCompile("(?m)^```(?:json)?\\s*|\\s*```$")
 
 // Result is the parsed shape of a successful gemini extraction response.
+// experience / competency / trait are the three classification buckets used
+// by both JD and user-side extraction.
 type Result struct {
 	Experience []string
 	Competency []string
 	Trait      []string
 }
 
-var errInvalidShape = errors.New("invalid response shape")
+// ErrInvalidShape is returned when the model's response is not valid JSON
+// or does not contain the expected keys / value types.
+var ErrInvalidShape = errors.New("invalid response shape")
 
-func parseResponse(raw string) (*Result, error) {
+// ParseResponse parses a gemini extraction response into experience /
+// competency / trait string slices.
+func ParseResponse(raw string) (*Result, error) {
 	if raw == "" {
-		return nil, errInvalidShape
+		return nil, ErrInvalidShape
 	}
 	cleaned := strings.TrimSpace(fenceRE.ReplaceAllString(raw, ""))
 
 	var data map[string]any
 	if err := json.Unmarshal([]byte(cleaned), &data); err != nil {
-		return nil, errInvalidShape
+		return nil, ErrInvalidShape
 	}
 
 	experience, err := extractStringList(data, "experience")
@@ -52,6 +59,19 @@ func parseResponse(raw string) (*Result, error) {
 	}, nil
 }
 
+// EncodeArray emits a JSON array with UTF-8 preserved as-is and without
+// escaping HTML-unsafe ASCII (<, >, &), so the stored extraction reads the
+// same as the source body.
+func EncodeArray(items []string) (string, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(items); err != nil {
+		return "", fmt.Errorf("marshal: %w", err)
+	}
+	return strings.TrimRight(buf.String(), "\n"), nil
+}
+
 func extractStringList(data map[string]any, key string) ([]string, error) {
 	v, ok := data[key]
 	if !ok {
@@ -59,7 +79,7 @@ func extractStringList(data map[string]any, key string) ([]string, error) {
 	}
 	list, ok := v.([]any)
 	if !ok {
-		return nil, errInvalidShape
+		return nil, ErrInvalidShape
 	}
 	items := make([]string, 0, len(list))
 	for _, item := range list {

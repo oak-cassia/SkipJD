@@ -107,24 +107,6 @@ func WithAttemptTimeout(d time.Duration) Option {
 	}
 }
 
-// WithLocation overrides the timezone used for date normalization.
-func WithLocation(loc *time.Location) Option {
-	return func(s *ClientScraper) {
-		if loc != nil {
-			s.loc = loc
-		}
-	}
-}
-
-// WithNowFunc overrides the time source. Useful in tests.
-func WithNowFunc(now func() time.Time) Option {
-	return func(s *ClientScraper) {
-		if now != nil {
-			s.now = now
-		}
-	}
-}
-
 func NewClientScraper(opts ...Option) (*ClientScraper, error) {
 	loc, err := time.LoadLocation("Asia/Seoul")
 	if err != nil {
