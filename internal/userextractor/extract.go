@@ -87,7 +87,7 @@ func Run(ctx context.Context, repo *repository.UserExtractionRepository, opts Op
 
 	result, err := geminiexec.ParseResponse(raw)
 	if err != nil {
-		return fmt.Errorf("parse response: %w (preview=%q)", err, preview(raw, 120))
+		return fmt.Errorf("parse response: %w (preview=%q)", err, geminiexec.Preview(raw, 120))
 	}
 
 	expJSON, err := geminiexec.EncodeArray(result.Experience)
@@ -119,11 +119,3 @@ func Run(ctx context.Context, repo *repository.UserExtractionRepository, opts Op
 	return nil
 }
 
-func preview(s string, n int) string {
-	collapsed := strings.ReplaceAll(s, "\n", " ")
-	runes := []rune(collapsed)
-	if len(runes) > n {
-		runes = runes[:n]
-	}
-	return string(runes)
-}

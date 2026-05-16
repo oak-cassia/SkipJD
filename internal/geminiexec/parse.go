@@ -59,6 +59,18 @@ func ParseResponse(raw string) (*Result, error) {
 	}, nil
 }
 
+// Preview returns up to n runes of s with newlines collapsed to spaces.
+// Used by extraction workers to include a short snippet of an unparseable
+// gemini response in error logs.
+func Preview(s string, n int) string {
+	collapsed := strings.ReplaceAll(s, "\n", " ")
+	runes := []rune(collapsed)
+	if len(runes) > n {
+		runes = runes[:n]
+	}
+	return string(runes)
+}
+
 // EncodeArray emits a JSON array with UTF-8 preserved as-is and without
 // escaping HTML-unsafe ASCII (<, >, &), so the stored extraction reads the
 // same as the source body.

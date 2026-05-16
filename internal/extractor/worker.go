@@ -8,12 +8,10 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strings"
 	"sync/atomic"
 	"time"
 
-	"golang.org/x/sync/errgroup"
-
+	"skipjd/internal/batch"
 	"skipjd/internal/geminiexec"
 	"skipjd/internal/repository"
 )
@@ -53,27 +51,13 @@ func Run(ctx context.Context, repo *repository.CrawlerRepository, opts Options) 
 
 	var success, failed atomic.Int64
 
-	workers := opts.Workers
-	if workers <= 0 {
-		workers = 3
-	}
-
-	eg, egCtx := errgroup.WithContext(ctx)
-	eg.SetLimit(workers)
-
-	for _, body := range pending {
-		b := body
-		eg.Go(func() error {
-			if processBody(egCtx, repo, b, opts) {
-				success.Add(1)
-			} else {
-				failed.Add(1)
-			}
-			return nil
-		})
-	}
-
-	_ = eg.Wait()
+	batch.Run(ctx, pending, opts.Workers, func(egCtx context.Context, b repository.PendingBody) {
+		if processBody(egCtx, repo, b, opts) {
+			success.Add(1)
+		} else {
+			failed.Add(1)
+		}
+	})
 
 	log.Printf("done success=%d failed=%d total=%d", success.Load(), failed.Load(), len(pending))
 	return nil
@@ -95,7 +79,7 @@ func processBody(ctx context.Context, repo *repository.CrawlerRepository, body r
 
 	result, err := geminiexec.ParseResponse(raw)
 	if err != nil {
-		log.Printf("parse failed posting_id=%d preview=%q", body.JobPostingID, previewLine(raw, 120))
+		log.Printf("parse failed posting_id=%d preview=%q", body.JobPostingID, geminiexec.Preview(raw, 120))
 		return false
 	}
 
@@ -128,11 +112,3 @@ func processBody(ctx context.Context, repo *repository.CrawlerRepository, body r
 	return true
 }
 
-func previewLine(s string, n int) string {
-	collapsed := strings.ReplaceAll(s, "\n", " ")
-	runes := []rune(collapsed)
-	if len(runes) > n {
-		runes = runes[:n]
-	}
-	return string(runes)
-}

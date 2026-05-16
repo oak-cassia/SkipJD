@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"skipjd/internal/geminiexec"
 	"skipjd/internal/retry"
 )
 
@@ -139,19 +140,7 @@ func classifyGeminiError(err error, stderrText, imgName string) error {
 	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
-		return fmt.Errorf("gemini exit=%d img=%s stderr=%q", exitErr.ExitCode(), imgName, tailLines(stderrText, 3))
+		return fmt.Errorf("gemini exit=%d img=%s stderr=%q", exitErr.ExitCode(), imgName, geminiexec.TailLines(stderrText, 3))
 	}
 	return fmt.Errorf("gemini run: %w", err)
-}
-
-func tailLines(s string, n int) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return ""
-	}
-	lines := strings.Split(s, "\n")
-	if len(lines) <= n {
-		return strings.Join(lines, "\n")
-	}
-	return strings.Join(lines[len(lines)-n:], "\n")
 }

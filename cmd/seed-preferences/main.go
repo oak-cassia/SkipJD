@@ -17,10 +17,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/joho/godotenv"
-
-	"skipjd/internal/config"
-	"skipjd/internal/database"
+	"skipjd/internal/cmdutil"
 	"skipjd/internal/repository"
 )
 
@@ -34,14 +31,10 @@ func main() {
 	apply := flag.Bool("apply", false, "apply changes (default: dry-run)")
 	flag.Parse()
 
-	_ = godotenv.Load()
+	ctx, cancel := cmdutil.SetupContext(0)
+	defer cancel()
 
-	ctx := context.Background()
-
-	db, err := database.NewGormDB(config.LoadDatabaseConfig())
-	if err != nil {
-		log.Fatalf("failed to connect db: %v", err)
-	}
+	db := cmdutil.MustConnectDB()
 
 	dutyCodes, err := parseCSVInts(*dutyCodesFlag)
 	if err != nil {

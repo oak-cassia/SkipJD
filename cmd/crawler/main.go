@@ -1,43 +1,28 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"log"
 	"os"
 	"time"
 
-	"github.com/joho/godotenv"
-
-	"skipjd/internal/config"
+	"skipjd/internal/cmdutil"
 	"skipjd/internal/crawler"
-	"skipjd/internal/database"
 	"skipjd/internal/gamejob"
 	"skipjd/internal/model"
 	"skipjd/internal/repository"
 )
 
 func main() {
-	_ = godotenv.Load()
-
 	detailWorkers := flag.Int("detail-workers", 5, "Number of concurrent detail worker routines")
 	httpTimeout := flag.Duration("http-timeout", 15*time.Second, "Timeout per HTTP attempt")
 	deadline := flag.Duration("deadline", 0, "Max duration for the crawler batch (0 = no deadline)")
 	flag.Parse()
 
-	ctx := context.Background()
-	if *deadline > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, *deadline)
-		defer cancel()
-	}
+	ctx, cancel := cmdutil.SetupContext(*deadline)
+	defer cancel()
 
-	cfg := config.LoadDatabaseConfig()
-
-	db, err := database.NewGormDB(cfg)
-	if err != nil {
-		log.Fatalf("failed to connect db: %v", err)
-	}
+	db := cmdutil.MustConnectDB()
 
 	if err := db.AutoMigrate(
 		&model.CrawlRun{},

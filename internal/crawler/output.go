@@ -31,13 +31,25 @@ func Encode(postings []model.JobPosting, dutyCodesBySourceKey map[string][]int) 
 	}
 
 	for _, posting := range postings {
+		var dutyCodes []int
+		if src := dutyCodesBySourceKey[posting.SourceKey]; len(src) > 0 {
+			dutyCodes = make([]int, len(src))
+			copy(dutyCodes, src)
+		}
+
+		var minExp *int
+		if posting.MinExperienceYears != nil {
+			v := *posting.MinExperienceYears
+			minExp = &v
+		}
+
 		output.Postings = append(output.Postings, Posting{
 			Title:              posting.Title,
 			Company:            posting.Company,
-			DutyCodes:          cloneDutyCodes(dutyCodesBySourceKey[posting.SourceKey]),
+			DutyCodes:          dutyCodes,
 			URL:                posting.URL,
 			ClosingDate:        posting.ClosingDate,
-			MinExperienceYears: cloneMinExperienceYears(posting.MinExperienceYears),
+			MinExperienceYears: minExp,
 		})
 	}
 
@@ -94,9 +106,16 @@ func Parse(outputText string, seenAt time.Time) ([]model.JobPosting, map[string]
 			minExperienceYears = new(int)
 			*minExperienceYears = *posting.MinExperienceYears
 		}
-		normalizedDutyCodes, err := normalizeDutyCodes(posting.DutyCodes)
-		if err != nil {
-			return nil, nil, fmt.Errorf("posting %d: %w", i, err)
+		var normalizedDutyCodes []int
+		if len(posting.DutyCodes) > 0 {
+			normalizedDutyCodes = make([]int, 0, len(posting.DutyCodes))
+			for _, value := range posting.DutyCodes {
+				if value <= 0 {
+					return nil, nil, fmt.Errorf("posting %d: duty_codes must contain positive integers", i)
+				}
+				normalizedDutyCodes = append(normalizedDutyCodes, value)
+			}
+			normalizedDutyCodes = gamejob.NormalizeDutyCodes(normalizedDutyCodes)
 		}
 		if len(normalizedDutyCodes) > 0 {
 			dutyCodesBySourceKey[sourceKey] = normalizedDutyCodes
@@ -116,40 +135,6 @@ func Parse(outputText string, seenAt time.Time) ([]model.JobPosting, map[string]
 	}
 
 	return postings, dutyCodesBySourceKey, nil
-}
-
-func cloneMinExperienceYears(value *int) *int {
-	if value == nil {
-		return nil
-	}
-
-	return new(*value)
-}
-
-func cloneDutyCodes(values []int) []int {
-	if len(values) == 0 {
-		return nil
-	}
-
-	cloned := make([]int, len(values))
-	copy(cloned, values)
-	return cloned
-}
-
-func normalizeDutyCodes(values []int) ([]int, error) {
-	if len(values) == 0 {
-		return nil, nil
-	}
-
-	normalized := make([]int, 0, len(values))
-	for _, value := range values {
-		if value <= 0 {
-			return nil, fmt.Errorf("duty_codes must contain positive integers")
-		}
-		normalized = append(normalized, value)
-	}
-
-	return gamejob.NormalizeDutyCodes(normalized), nil
 }
 
 func validatePosting(title, rawURL string) error {

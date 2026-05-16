@@ -38,11 +38,10 @@ import (
 	"sort"
 	"time"
 
-	"github.com/joho/godotenv"
 	"gorm.io/gorm"
 
+	"skipjd/internal/cmdutil"
 	"skipjd/internal/config"
-	"skipjd/internal/database"
 	"skipjd/internal/gamejob"
 	"skipjd/internal/mailing"
 	"skipjd/internal/matcher"
@@ -69,19 +68,10 @@ func main() {
 		log.Fatalf("--top-n must be > 0")
 	}
 
-	_ = godotenv.Load()
+	ctx, cancel := cmdutil.SetupContext(*deadline)
+	defer cancel()
 
-	ctx := context.Background()
-	if *deadline > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, *deadline)
-		defer cancel()
-	}
-
-	db, err := database.NewGormDB(config.LoadDatabaseConfig())
-	if err != nil {
-		log.Fatalf("db: %v", err)
-	}
+	db := cmdutil.MustConnectDB()
 	if err := db.AutoMigrate(
 		&model.User{},
 		&model.UserCareer{},
@@ -114,6 +104,7 @@ func main() {
 	if *userID != 0 {
 		targets = []uint{*userID}
 	} else {
+		var err error
 		targets, err = userExtRepo.ListUserIDsWithExtraction(ctx)
 		if err != nil {
 			log.Fatalf("resolve targets: %v", err)

@@ -11,14 +11,10 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"log"
 
-	"github.com/joho/godotenv"
-
-	"skipjd/internal/config"
-	"skipjd/internal/database"
+	"skipjd/internal/cmdutil"
 	"skipjd/internal/extractor"
 	"skipjd/internal/repository"
 )
@@ -32,20 +28,10 @@ func main() {
 	deadline := flag.Duration("deadline", 0, "Max duration for the extractor batch (0 = no deadline)")
 	flag.Parse()
 
-	_ = godotenv.Load()
+	ctx, cancel := cmdutil.SetupContext(*deadline)
+	defer cancel()
 
-	ctx := context.Background()
-	if *deadline > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, *deadline)
-		defer cancel()
-	}
-
-	db, err := database.NewGormDB(config.LoadDatabaseConfig())
-	if err != nil {
-		log.Fatalf("failed to connect db: %v", err)
-	}
-
+	db := cmdutil.MustConnectDB()
 	repo := repository.NewCrawlerRepository(db)
 	if err := extractor.Run(ctx, repo, extractor.Options{
 		Limit:         *limit,

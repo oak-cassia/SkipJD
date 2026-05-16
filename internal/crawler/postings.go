@@ -24,6 +24,7 @@ func (c *Crawler) toJobPostings(
 			continue
 		}
 
+		minExp := scrapedPosting.MinExperienceYears
 		postings = append(postings, model.JobPosting{
 			Source:             appName,
 			SourceKey:          scrapedPosting.SourceKey,
@@ -31,7 +32,7 @@ func (c *Crawler) toJobPostings(
 			Company:            scrapedPosting.Company,
 			URL:                scrapedPosting.URL,
 			ClosingDate:        scrapedPosting.ClosingDate,
-			MinExperienceYears: intPtr(scrapedPosting.MinExperienceYears),
+			MinExperienceYears: &minExp,
 			FirstSeenAt:        seenAt,
 			LastSeenAt:         seenAt,
 		})
@@ -39,9 +40,4 @@ func (c *Crawler) toJobPostings(
 	}
 
 	return postings, dutyCodesBySourceKey
-}
-
-func intPtr(value int) *int {
-	copied := value
-	return &copied
 }

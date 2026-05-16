@@ -14,15 +14,11 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"log"
 	"strings"
 
-	"github.com/joho/godotenv"
-
-	"skipjd/internal/config"
-	"skipjd/internal/database"
+	"skipjd/internal/cmdutil"
 	"skipjd/internal/model"
 	"skipjd/internal/repository"
 	"skipjd/internal/userextractor"
@@ -43,19 +39,10 @@ func main() {
 	force := flag.Bool("force", false, "re-run gemini even if SourceHash matches the stored extraction")
 	flag.Parse()
 
-	_ = godotenv.Load()
+	ctx, cancel := cmdutil.SetupContext(*deadline)
+	defer cancel()
 
-	ctx := context.Background()
-	if *deadline > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, *deadline)
-		defer cancel()
-	}
-
-	db, err := database.NewGormDB(config.LoadDatabaseConfig())
-	if err != nil {
-		log.Fatalf("failed to connect db: %v", err)
-	}
+	db := cmdutil.MustConnectDB()
 
 	if err := db.AutoMigrate(&model.User{}, &model.UserExtraction{}); err != nil {
 		log.Fatalf("failed to migrate db: %v", err)

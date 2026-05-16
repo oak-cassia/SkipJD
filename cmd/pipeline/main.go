@@ -10,11 +10,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/joho/godotenv"
-
-	"skipjd/internal/config"
+	"skipjd/internal/cmdutil"
 	"skipjd/internal/crawler"
-	"skipjd/internal/database"
 	"skipjd/internal/extractor"
 	"skipjd/internal/gamejob"
 	"skipjd/internal/model"
@@ -23,8 +20,6 @@ import (
 )
 
 func main() {
-	_ = godotenv.Load()
-
 	limit := flag.Int("limit", 50, "max postings per OCR/extract batch")
 	offset := flag.Int("offset", 0, "skip the first N postings in OCR/extract batches")
 	workers := flag.Int("workers", 3, "concurrent workers per stage (crawl detail, ocr, extract)")
@@ -38,17 +33,10 @@ func main() {
 	skipExtract := flag.Bool("skip-extract", false, "skip stage 3 (extract)")
 	flag.Parse()
 
-	ctx := context.Background()
-	if *deadline > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, *deadline)
-		defer cancel()
-	}
+	ctx, cancel := cmdutil.SetupContext(*deadline)
+	defer cancel()
 
-	db, err := database.NewGormDB(config.LoadDatabaseConfig())
-	if err != nil {
-		log.Fatalf("failed to connect db: %v", err)
-	}
+	db := cmdutil.MustConnectDB()
 
 	if err := db.AutoMigrate(
 		&model.CrawlRun{},

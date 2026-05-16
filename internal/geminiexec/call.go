@@ -147,12 +147,15 @@ func classifyError(err error, stderrText, label string) error {
 	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
-		return fmt.Errorf("gemini exit=%d %s stderr=%q", exitErr.ExitCode(), label, tailLines(stderrText, 3))
+		return fmt.Errorf("gemini exit=%d %s stderr=%q", exitErr.ExitCode(), label, TailLines(stderrText, 3))
 	}
 	return fmt.Errorf("gemini run: %w", err)
 }
 
-func tailLines(s string, n int) string {
+// TailLines returns up to the last n lines of s with surrounding whitespace
+// trimmed. Used to keep error messages bounded when surfacing gemini-cli
+// stderr tails.
+func TailLines(s string, n int) string {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return ""

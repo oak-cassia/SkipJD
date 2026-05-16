@@ -13,8 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"golang.org/x/sync/errgroup"
-
+	"skipjd/internal/batch"
 	"skipjd/internal/geminiexec"
 	"skipjd/internal/model"
 	"skipjd/internal/repository"
@@ -52,40 +51,26 @@ func Run(ctx context.Context, repo *repository.CrawlerRepository, opts Options) 
 
 	var success, empty atomic.Int64
 
-	workers := opts.Workers
-	if workers <= 0 {
-		workers = 3
-	}
+	batch.Run(ctx, ids, opts.Workers, func(egCtx context.Context, pID uint) {
+		images, err := repo.FetchImagesForPosting(egCtx, pID)
+		if err != nil {
+			log.Printf("fetch images failed posting_id=%d err=%v", pID, err)
+			return
+		}
 
-	eg, egCtx := errgroup.WithContext(ctx)
-	eg.SetLimit(workers)
+		ocrText := processPosting(egCtx, pID, images, opts)
+		if ocrText == "" {
+			empty.Add(1)
+			log.Printf("empty result posting_id=%d", pID)
+			return
+		}
 
-	for _, id := range ids {
-		pID := id
-		eg.Go(func() error {
-			images, err := repo.FetchImagesForPosting(egCtx, pID)
-			if err != nil {
-				log.Printf("fetch images failed posting_id=%d err=%v", pID, err)
-				return nil
-			}
-
-			ocrText := processPosting(egCtx, pID, images, opts)
-			if ocrText == "" {
-				empty.Add(1)
-				log.Printf("empty result posting_id=%d", pID)
-				return nil
-			}
-
-			if err := repo.UpsertJobPostingBodyOCR(egCtx, pID, ocrText); err != nil {
-				log.Printf("upsert failed posting_id=%d err=%v", pID, err)
-				return nil
-			}
-			success.Add(1)
-			return nil
-		})
-	}
-
-	_ = eg.Wait()
+		if err := repo.UpsertJobPostingBodyOCR(egCtx, pID, ocrText); err != nil {
+			log.Printf("upsert failed posting_id=%d err=%v", pID, err)
+			return
+		}
+		success.Add(1)
+	})
 
 	log.Printf("done success=%d empty=%d total=%d", success.Load(), empty.Load(), len(ids))
 	return nil
