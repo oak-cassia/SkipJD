@@ -161,26 +161,24 @@ func (r *PreferencesRepository) ReplaceUserCareer(ctx context.Context, userID ui
 		return fmt.Errorf("replace user career: userID must be > 0")
 	}
 
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.
-			Where("user_id = ?", userID).
-			Delete(&model.UserCareer{}).
-			Error; err != nil {
-			return err
-		}
-
-		if years == nil {
-			return nil
-		}
-
-		return tx.Create(&model.UserCareer{UserID: userID, ExperienceYears: years}).Error
-	})
+	res := r.db.WithContext(ctx).
+		Model(&model.User{}).
+		Where("id = ?", userID).
+		Update("experience_years", years)
+	if res.Error != nil {
+		return fmt.Errorf("replace user career: %w", res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return fmt.Errorf("replace user career: user %d not found", userID)
+	}
+	return nil
 }
 
 func (r *PreferencesRepository) GetUserCareer(ctx context.Context, userID uint) (*int, error) {
-	var row model.UserCareer
+	var row model.User
 	err := r.db.WithContext(ctx).
-		Where("user_id = ?", userID).
+		Select("experience_years").
+		Where("id = ?", userID).
 		Take(&row).
 		Error
 	if err != nil {

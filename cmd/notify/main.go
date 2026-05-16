@@ -74,7 +74,6 @@ func main() {
 	db := cmdutil.MustConnectDB()
 	if err := db.AutoMigrate(
 		&model.User{},
-		&model.UserCareer{},
 		&model.UserDutyPreference{},
 		&model.UserCompanyPreference{},
 		&model.UserNotificationLog{},

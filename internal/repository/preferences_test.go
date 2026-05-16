@@ -126,10 +126,6 @@ func TestReplaceUserCareerCreatesAndUpdatesSingleRow(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, 5, *got)
-
-	var count int64
-	require.NoError(t, db.Model(&model.UserCareer{}).Where("user_id = ?", 1).Count(&count).Error)
-	assert.Equal(t, int64(1), count, "exactly one row per user")
 }
 
 func TestReplaceUserCareerNilClearsRow(t *testing.T) {
@@ -218,7 +214,6 @@ func newPreferencesTestDB(t *testing.T) *gorm.DB {
 		&model.User{},
 		&model.UserDutyPreference{},
 		&model.UserCompanyPreference{},
-		&model.UserCareer{},
 	))
 
 	return db
