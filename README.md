@@ -80,3 +80,58 @@ internal/
   telemetry/           metrics/logging hooks
 ```
 
+## Getting Started
+
+### Prerequisites
+
+- **Go 1.26+**
+- **MySQL** running locally (the pipeline auto-migrates the schema on first run)
+- **[`gemini` CLI](https://github.com/google-gemini/gemini-cli)** on `PATH` — used by the OCR worker and extractor
+- A **`.env`** file in the repo root (git-ignored). Minimum keys:
+
+  ```env
+  DB_HOST=127.0.0.1
+  DB_PORT=3306
+  DB_USER=root
+  DB_PASS=yourpassword
+  DB_NAME=skipjd
+  DB_AUTO_MIGRATE=true
+
+  # only needed for `cmd/notify`
+  SMTP_HOST=smtp.gmail.com
+  SMTP_PORT=587
+  SMTP_USER=you@example.com
+  SMTP_PASS=app-password
+  MAIL_FROM=you@example.com
+  MAIL_TO=you@example.com
+  ```
+
+### Run the whole pipeline
+
+```sh
+# crawl → OCR → extract, in one process
+go run ./cmd/pipeline
+```
+
+Handy flags: `-limit N` (postings per OCR/extract batch, default 50), `-workers N`
+(concurrency per stage, default 3), and `-skip-crawl` / `-skip-ocr` / `-skip-extract`
+to run a subset.
+
+### Run a single stage
+
+```sh
+go run ./cmd/crawler      # collect postings + image URLs
+go run ./cmd/ocr-worker   # OCR image-bodied postings   (-limit, -workers)
+go run ./cmd/extractor    # body text → structured JSON  (-limit, -workers)
+```
+
+### Recommend & notify
+
+```sh
+# seed a user's preferences (omit --apply for a dry-run)
+go run ./cmd/seed-preferences --user-id 1 --duty-codes 1,3 --apply
+
+# email the top recommendations (--dry-run prints to stdout instead of sending)
+go run ./cmd/notify --user-id 1 --dry-run
+```
+
