@@ -14,7 +14,7 @@ import (
 )
 
 func TestBuildDigestBodyIncludesAllFields(t *testing.T) {
-	body := buildDigestBody([]model.JobPosting{
+	body := BuildDigestBody([]model.JobPosting{
 		{
 			Title:       "Backend Engineer",
 			Company:     "Krafton",

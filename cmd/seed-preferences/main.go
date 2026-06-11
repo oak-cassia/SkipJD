@@ -18,82 +18,111 @@ import (
 	"strings"
 
 	"skipjd/internal/cmdutil"
+	"skipjd/internal/gamejob"
 	"skipjd/internal/repository"
 )
+
+// seedConfig bundles the flag values for run.
+type seedConfig struct {
+	userID       uint
+	email        string
+	dutyCodesCSV string
+	companyCount int
+	companiesCSV string
+	careerYears  int
+	apply        bool
+}
 
 func main() {
 	userID := flag.Uint("user-id", 1, "target user id")
 	emailFlag := flag.String("email", "dummy@example.com", "target user email")
-	dutyCodesFlag := flag.String("duty-codes", "1,3", "comma-separated duty codes (1=client, 3=server, 16=AI)")
+	dutyCodesFlag := flag.String("duty-codes", "1,3", "comma-separated duty codes ("+gamejob.DutyCodesHelp()+")")
 	companyCount := flag.Int("company-count", 5, "number of top-N companies from job_postings.company DISTINCT")
 	companiesFlag := flag.String("companies", "", "comma-separated company names (overrides --company-count)")
 	careerYearsFlag := flag.Int("career-years", -1, "user experience years (>=0; -1 means unset/clear)")
 	apply := flag.Bool("apply", false, "apply changes (default: dry-run)")
 	flag.Parse()
 
+	cfg := seedConfig{
+		userID:       *userID,
+		email:        *emailFlag,
+		dutyCodesCSV: *dutyCodesFlag,
+		companyCount: *companyCount,
+		companiesCSV: *companiesFlag,
+		careerYears:  *careerYearsFlag,
+		apply:        *apply,
+	}
+	if err := run(cfg); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// run is split from main so log.Fatal cannot skip the deferred cancel.
+func run(cfg seedConfig) error {
 	ctx, cancel := cmdutil.SetupContext(0)
 	defer cancel()
 
 	db := cmdutil.MustConnectDB()
 
-	dutyCodes, err := parseCSVInts(*dutyCodesFlag)
+	dutyCodes, err := parseCSVInts(cfg.dutyCodesCSV)
 	if err != nil {
-		log.Fatalf("invalid --duty-codes: %v", err)
+		return fmt.Errorf("invalid --duty-codes: %w", err)
 	}
 
 	repo := repository.NewPreferencesRepository(db)
 
-	companies, err := resolveCompanies(ctx, repo, *companiesFlag, *companyCount)
+	companies, err := resolveCompanies(ctx, repo, cfg.companiesCSV, cfg.companyCount)
 	if err != nil {
-		log.Fatalf("resolve companies: %v", err)
+		return fmt.Errorf("resolve companies: %w", err)
 	}
 
-	careerYears := resolveCareerYears(*careerYearsFlag)
+	careerYears := resolveCareerYears(cfg.careerYears)
 
-	fmt.Printf("planned preferences for user_id=%d:\n", *userID)
-	fmt.Printf("  email      : %s\n", *emailFlag)
+	fmt.Printf("planned preferences for user_id=%d:\n", cfg.userID)
+	fmt.Printf("  email      : %s\n", cfg.email)
 	fmt.Printf("  duty_codes : %v\n", dutyCodes)
 	fmt.Printf("  companies  : %v\n", companies)
 	fmt.Printf("  career_yrs : %s\n", formatCareerYears(careerYears))
 
-	if !*apply {
+	if !cfg.apply {
 		fmt.Println("\n(dry-run) re-run with --apply to persist.")
-		return
+		return nil
 	}
 
-	user, err := repo.EnsureUser(ctx, uint(*userID), *emailFlag)
+	user, err := repo.EnsureUser(ctx, cfg.userID, cfg.email)
 	if err != nil {
-		log.Fatalf("ensure user: %v", err)
+		return fmt.Errorf("ensure user: %w", err)
 	}
 	fmt.Printf("\nuser_id=%d ready (created_at=%s)\n", user.ID, user.CreatedAt.Format("2006-01-02 15:04:05"))
 
-	if err := repo.ReplaceUserDutyPreferences(ctx, uint(*userID), dutyCodes); err != nil {
-		log.Fatalf("replace duty preferences: %v", err)
+	if err = repo.ReplaceUserDutyPreferences(ctx, cfg.userID, dutyCodes); err != nil {
+		return fmt.Errorf("replace duty preferences: %w", err)
 	}
-	if err := repo.ReplaceUserCompanyPreferences(ctx, uint(*userID), companies); err != nil {
-		log.Fatalf("replace company preferences: %v", err)
+	if err = repo.ReplaceUserCompanyPreferences(ctx, cfg.userID, companies); err != nil {
+		return fmt.Errorf("replace company preferences: %w", err)
 	}
-	if err := repo.ReplaceUserCareer(ctx, uint(*userID), careerYears); err != nil {
-		log.Fatalf("replace user career: %v", err)
-	}
-
-	finalDuties, err := repo.GetUserDutyCodes(ctx, uint(*userID))
-	if err != nil {
-		log.Fatalf("read back duty preferences: %v", err)
-	}
-	finalCompanies, err := repo.GetUserCompanyNames(ctx, uint(*userID))
-	if err != nil {
-		log.Fatalf("read back company preferences: %v", err)
-	}
-	finalCareer, err := repo.GetUserCareer(ctx, uint(*userID))
-	if err != nil {
-		log.Fatalf("read back user career: %v", err)
+	if err = repo.ReplaceUserCareer(ctx, cfg.userID, careerYears); err != nil {
+		return fmt.Errorf("replace user career: %w", err)
 	}
 
-	fmt.Printf("\napplied. current state for user_id=%d:\n", *userID)
+	finalDuties, err := repo.GetUserDutyCodes(ctx, cfg.userID)
+	if err != nil {
+		return fmt.Errorf("read back duty preferences: %w", err)
+	}
+	finalCompanies, err := repo.GetUserCompanyNames(ctx, cfg.userID)
+	if err != nil {
+		return fmt.Errorf("read back company preferences: %w", err)
+	}
+	finalCareer, err := repo.GetUserCareer(ctx, cfg.userID)
+	if err != nil {
+		return fmt.Errorf("read back user career: %w", err)
+	}
+
+	fmt.Printf("\napplied. current state for user_id=%d:\n", cfg.userID)
 	fmt.Printf("  duty_codes : %v\n", finalDuties)
 	fmt.Printf("  companies  : %v\n", finalCompanies)
 	fmt.Printf("  career_yrs : %s\n", formatCareerYears(finalCareer))
+	return nil
 }
 
 func resolveCareerYears(raw int) *int {

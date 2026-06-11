@@ -32,7 +32,26 @@ const (
 	httpRetryBaseDelay    = 500 * time.Millisecond
 )
 
-var defaultDutyCodes = []int{1, 3, 16}
+// Duty codes are gamejob's job-category identifiers. These three form the
+// curated closed set the crawler iterates over and that user preferences
+// pick from.
+const (
+	DutyClient = 1
+	DutyServer = 3
+	DutyAI     = 16
+)
+
+// dutyCodeLabels maps each curated duty code to its Korean label. It is the
+// single source of truth for what a duty code means; external callers render
+// it via DutyCodesHelp.
+var dutyCodeLabels = map[int]string{
+	DutyClient: "클라",
+	DutyServer: "서버",
+	DutyAI:     "AI",
+}
+
+// defaultDutyCodes is the curated duty-code set in crawl order.
+var defaultDutyCodes = []int{DutyClient, DutyServer, DutyAI}
 
 var (
 	hoursAgoPattern           = regexp.MustCompile(`(\d+)\s*시간\s*전`)
@@ -135,7 +154,7 @@ func NewClientScraper(opts ...Option) (*ClientScraper, error) {
 
 func (s *ClientScraper) Scrape(ctx context.Context, opts ScrapeOptions) ([]ScrapedPosting, error) {
 	if opts.TodayDate.IsZero() {
-		return nil, fmt.Errorf("today date is required")
+		return nil, errors.New("today date is required")
 	}
 
 	todayDate := s.normalizeDate(opts.TodayDate)
@@ -400,7 +419,7 @@ func (s *ClientScraper) parseListPage(htmlText string, currentPage int) (listPag
 func (s *ClientScraper) parseObservedDate(todayDate time.Time, modifyText string) (time.Time, error) {
 	normalized := normalizeSpace(modifyText)
 	if normalized == "" {
-		return time.Time{}, fmt.Errorf("modify text is empty")
+		return time.Time{}, errors.New("modify text is empty")
 	}
 
 	referenceTime := s.referenceTime(todayDate)
@@ -463,7 +482,7 @@ func parseMinExperienceYears(expText string) int {
 func buildSourceKey(rawURL string) (string, error) {
 	trimmed := strings.TrimSpace(rawURL)
 	if trimmed == "" {
-		return "", fmt.Errorf("source key requires a non-empty url")
+		return "", errors.New("source key requires a non-empty url")
 	}
 
 	parsedURL, err := url.Parse(trimmed)
@@ -496,6 +515,16 @@ func NormalizeDutyCodes(codes []int) []int {
 	})
 
 	return normalized
+}
+
+// DutyCodesHelp renders the curated duty codes as "code=label" pairs in crawl
+// order, e.g. "1=클라, 3=서버, 16=AI". Handy for CLI flag descriptions.
+func DutyCodesHelp() string {
+	parts := make([]string, len(defaultDutyCodes))
+	for i, code := range defaultDutyCodes {
+		parts[i] = fmt.Sprintf("%d=%s", code, dutyCodeLabels[code])
+	}
+	return strings.Join(parts, ", ")
 }
 
 func normalizeSpace(value string) string {
@@ -550,7 +579,7 @@ func (s *ClientScraper) referenceTime(todayDate time.Time) time.Time {
 
 func (s *ClientScraper) resolveURL(href string) (string, error) {
 	if strings.TrimSpace(href) == "" {
-		return "", fmt.Errorf("url is empty")
+		return "", errors.New("url is empty")
 	}
 
 	parsed, err := url.Parse(href)

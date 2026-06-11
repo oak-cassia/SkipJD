@@ -23,7 +23,7 @@ func NewPreferencesRepository(db *gorm.DB) *PreferencesRepository {
 
 func (r *PreferencesRepository) EnsureUser(ctx context.Context, id uint, email string) (*model.User, error) {
 	if id == 0 {
-		return nil, fmt.Errorf("ensure user: id must be > 0")
+		return nil, errors.New("ensure user: id must be > 0")
 	}
 
 	if err := r.db.WithContext(ctx).
@@ -42,6 +42,19 @@ func (r *PreferencesRepository) EnsureUser(ctx context.Context, id uint, email s
 		return nil, fmt.Errorf("ensure user reload: %w", err)
 	}
 	return &user, nil
+}
+
+// ListUserIDs returns every user id in ascending order.
+func (r *PreferencesRepository) ListUserIDs(ctx context.Context) ([]uint, error) {
+	var ids []uint
+	if err := r.db.WithContext(ctx).
+		Model(&model.User{}).
+		Order("id").
+		Pluck("id", &ids).
+		Error; err != nil {
+		return nil, fmt.Errorf("list user ids: %w", err)
+	}
+	return ids, nil
 }
 
 func (r *PreferencesRepository) ListDistinctCompanyNames(ctx context.Context) ([]string, error) {
@@ -75,7 +88,7 @@ func (r *PreferencesRepository) ListDistinctCompanyNames(ctx context.Context) ([
 
 func (r *PreferencesRepository) ReplaceUserDutyPreferences(ctx context.Context, userID uint, dutyCodes []int) error {
 	if userID == 0 {
-		return fmt.Errorf("replace user duty preferences: userID must be > 0")
+		return errors.New("replace user duty preferences: userID must be > 0")
 	}
 
 	normalized := gamejob.NormalizeDutyCodes(dutyCodes)
@@ -102,7 +115,7 @@ func (r *PreferencesRepository) ReplaceUserDutyPreferences(ctx context.Context, 
 
 func (r *PreferencesRepository) ReplaceUserCompanyPreferences(ctx context.Context, userID uint, companies []string) error {
 	if userID == 0 {
-		return fmt.Errorf("replace user company preferences: userID must be > 0")
+		return errors.New("replace user company preferences: userID must be > 0")
 	}
 
 	seen := make(map[string]struct{}, len(companies))
@@ -150,15 +163,15 @@ func (r *PreferencesRepository) GetUserDutyCodes(ctx context.Context, userID uin
 	}
 
 	codes := make([]int, 0, len(rows))
-	for _, row := range rows {
-		codes = append(codes, row.DutyCode)
+	for i := range rows {
+		codes = append(codes, rows[i].DutyCode)
 	}
 	return codes, nil
 }
 
 func (r *PreferencesRepository) ReplaceUserCareer(ctx context.Context, userID uint, years *int) error {
 	if userID == 0 {
-		return fmt.Errorf("replace user career: userID must be > 0")
+		return errors.New("replace user career: userID must be > 0")
 	}
 
 	res := r.db.WithContext(ctx).
@@ -183,7 +196,8 @@ func (r *PreferencesRepository) GetUserCareer(ctx context.Context, userID uint) 
 		Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
+			// "career not set" is a valid state callers branch on, not an error.
+			return nil, nil //nolint:nilnil // not-found contract is (nil, nil)
 		}
 		return nil, fmt.Errorf("get user career: %w", err)
 	}
@@ -201,8 +215,8 @@ func (r *PreferencesRepository) GetUserCompanyNames(ctx context.Context, userID 
 	}
 
 	names := make([]string, 0, len(rows))
-	for _, row := range rows {
-		names = append(names, row.CompanyName)
+	for i := range rows {
+		names = append(names, rows[i].CompanyName)
 	}
 	return names, nil
 }

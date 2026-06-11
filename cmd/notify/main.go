@@ -46,6 +46,7 @@ import (
 	"skipjd/internal/mailing"
 	"skipjd/internal/matcher"
 	"skipjd/internal/model"
+	"skipjd/internal/recommend"
 	"skipjd/internal/repository"
 )
 
@@ -65,10 +66,18 @@ func main() {
 	flag.Parse()
 
 	if *topN <= 0 {
-		log.Fatalf("--top-n must be > 0")
+		log.Fatal("--top-n must be > 0")
 	}
 
-	ctx, cancel := cmdutil.SetupContext(*deadline)
+	// Non-zero exit so cron/launchd can surface batch failures.
+	if err := run(*deadline, *source, *topN, *dryRun, *userID); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// run is split from main so log.Fatal cannot skip the deferred cancel.
+func run(deadline time.Duration, source string, topN int, dryRun bool, userID uint) error {
+	ctx, cancel := cmdutil.SetupContext(deadline)
 	defer cancel()
 
 	db := cmdutil.MustConnectDB()
@@ -78,7 +87,7 @@ func main() {
 		&model.UserCompanyPreference{},
 		&model.UserNotificationLog{},
 	); err != nil {
-		log.Fatalf("migrate: %v", err)
+		return fmt.Errorf("migrate: %w", err)
 	}
 
 	crawlerRepo := repository.NewCrawlerRepository(db)
@@ -87,7 +96,7 @@ func main() {
 	notifyLogRepo := repository.NewUserNotificationLogRepository(db)
 
 	var mailer *mailing.SMTPMailer
-	if !*dryRun {
+	if !dryRun {
 		smtp := config.LoadSMTPConfig()
 		mailer = mailing.NewSMTPMailer(mailing.SMTPConfig{
 			Host: smtp.SMTPHost,
@@ -100,24 +109,24 @@ func main() {
 	}
 
 	var targets []uint
-	if *userID != 0 {
-		targets = []uint{*userID}
+	if userID != 0 {
+		targets = []uint{userID}
 	} else {
 		var err error
 		targets, err = userExtRepo.ListUserIDsWithExtraction(ctx)
 		if err != nil {
-			log.Fatalf("resolve targets: %v", err)
+			return fmt.Errorf("resolve targets: %w", err)
 		}
 	}
 	if len(targets) == 0 {
 		log.Println("no target users (run cmd/user-extractor first)")
-		return
+		return nil
 	}
-	log.Printf("targets=%d dry_run=%v top_n=%d source=%s", len(targets), *dryRun, *topN, *source)
+	log.Printf("targets=%d dry_run=%v top_n=%d source=%s", len(targets), dryRun, topN, source)
 
 	var ok, errs, empty int
 	for _, uid := range targets {
-		status, err := notifyUser(ctx, db, crawlerRepo, userExtRepo, prefsRepo, notifyLogRepo, mailer, *source, *topN, *dryRun, uid)
+		status, err := notifyUser(ctx, db, crawlerRepo, userExtRepo, prefsRepo, notifyLogRepo, mailer, source, topN, dryRun, uid)
 		switch {
 		case err != nil:
 			errs++
@@ -130,9 +139,9 @@ func main() {
 	}
 	log.Printf("done sent=%d empty=%d failed=%d", ok, empty, errs)
 	if errs > 0 {
-		// Non-zero exit so cron/launchd can surface batch failures.
-		log.Fatalf("%d user(s) failed", errs)
+		return fmt.Errorf("%d user(s) failed", errs)
 	}
+	return nil
 }
 
 func notifyUser(
@@ -158,7 +167,7 @@ func notifyUser(
 		return 0, fmt.Errorf("load user extraction: %w", err)
 	}
 	if userExt == nil {
-		return 0, fmt.Errorf("no extraction yet — run cmd/user-extractor first")
+		return 0, errors.New("no extraction yet — run cmd/user-extractor first")
 	}
 
 	userTriple, err := decodeTriple(userExt.Experience, userExt.Competency, userExt.Trait)
@@ -194,16 +203,16 @@ func notifyUser(
 		return 0, fmt.Errorf("load sent log: %w", err)
 	}
 	fresh := make([]model.JobPosting, 0, len(candidates))
-	for _, p := range candidates {
-		if _, was := sent[p.ID]; was {
+	for i := range candidates {
+		if _, was := sent[candidates[i].ID]; was {
 			continue
 		}
-		fresh = append(fresh, p)
+		fresh = append(fresh, candidates[i])
 	}
 
 	postingIDs := make([]uint, 0, len(fresh))
-	for _, p := range fresh {
-		postingIDs = append(postingIDs, p.ID)
+	for i := range fresh {
+		postingIDs = append(postingIDs, fresh[i].ID)
 	}
 	extractions, err := crawlerRepo.GetExtractionsByPostingIDs(ctx, postingIDs)
 	if err != nil {
@@ -211,17 +220,17 @@ func notifyUser(
 	}
 
 	scoredAll := make([]mailing.ScoredPosting, 0, len(fresh))
-	for _, p := range fresh {
+	for i := range fresh {
 		var score matcher.Score
-		if ex, ok := extractions[p.ID]; ok {
+		if ex, ok := extractions[fresh[i].ID]; ok {
 			jdTriple, derr := decodeTriple(ex.Experience, ex.Competency, ex.Trait)
 			if derr != nil {
-				log.Printf("[user_id=%d] decode jd posting_id=%d: %v", userID, p.ID, derr)
+				log.Printf("[user_id=%d] decode jd posting_id=%d: %v", userID, fresh[i].ID, derr)
 			} else {
 				score = matcher.Match(userTriple, jdTriple)
 			}
 		}
-		scoredAll = append(scoredAll, mailing.ScoredPosting{Posting: p, Score: score})
+		scoredAll = append(scoredAll, mailing.ScoredPosting{Posting: fresh[i], Score: score})
 	}
 
 	mustShow := computeMustShow(scoredAll, companyNames, dutyCodes, careerYears)
@@ -229,19 +238,19 @@ func notifyUser(
 		return mustShow[i].Score.Total > mustShow[j].Score.Total
 	})
 	mustShowIDs := make(map[uint]struct{}, len(mustShow))
-	for _, m := range mustShow {
-		mustShowIDs[m.Posting.ID] = struct{}{}
+	for i := range mustShow {
+		mustShowIDs[mustShow[i].Posting.ID] = struct{}{}
 	}
 
 	recommended := make([]mailing.ScoredPosting, 0, len(scoredAll))
-	for _, s := range scoredAll {
-		if _, inMust := mustShowIDs[s.Posting.ID]; inMust {
+	for i := range scoredAll {
+		if _, inMust := mustShowIDs[scoredAll[i].Posting.ID]; inMust {
 			continue
 		}
-		if s.Score.Total == 0 {
+		if scoredAll[i].Score.Total == 0 {
 			continue
 		}
-		recommended = append(recommended, s)
+		recommended = append(recommended, scoredAll[i])
 	}
 	sort.SliceStable(recommended, func(i, j int) bool {
 		return recommended[i].Score.Total > recommended[j].Score.Total
@@ -275,8 +284,8 @@ func notifyUser(
 
 	sentIDs := make([]uint, 0, total)
 	for _, sec := range sections {
-		for _, item := range sec.Items {
-			sentIDs = append(sentIDs, item.Posting.ID)
+		for i := range sec.Items {
+			sentIDs = append(sentIDs, sec.Items[i].Posting.ID)
 		}
 	}
 	if err := notifyLogRepo.Record(ctx, userID, sentIDs, sentAt); err != nil {
@@ -289,19 +298,14 @@ func notifyUser(
 	return statusSent, nil
 }
 
-// computeMustShow returns postings that satisfy ALL of:
+// computeMustShow returns the scored postings whose underlying JobPosting
+// satisfies the rule-based criteria in internal/recommend (company + career
+// match; duty overlap already enforced upstream). Scores are carried through
+// untouched so the caller can still rank the must-show section by score.
 //
-//   - the user has both duty and company preferences set (otherwise the rule
-//     is undefined and the must-show set is empty);
-//   - the posting's company matches one in the user's company preference
-//     list (NormalizeCompanyName applied on both sides);
-//   - the posting's MinExperienceYears is nil OR userCareer is nil OR
-//     MinExperienceYears <= userCareer + 3 (most lenient interpretation —
-//     unknown experience never excludes).
-//
-// Duty overlap is already enforced upstream by ListJobPostingsByDutyCodes
-// when dutyCodes is non-empty; we still gate on `len(dutyCodes) > 0` here
-// to keep the rule contract explicit.
+// The must-show set is empty unless the user has BOTH duty and company
+// preferences set — gating on duty here keeps that contract explicit even
+// though the recommend rule itself only enforces the company/career part.
 func computeMustShow(
 	scored []mailing.ScoredPosting,
 	companyNames []string,
@@ -311,23 +315,12 @@ func computeMustShow(
 	if len(dutyCodes) == 0 || len(companyNames) == 0 {
 		return nil
 	}
-	userCompanies := make(map[string]struct{}, len(companyNames))
-	for _, c := range companyNames {
-		userCompanies[gamejob.NormalizeCompanyName(c)] = struct{}{}
-	}
-
-	out := make([]mailing.ScoredPosting, 0)
-	for _, s := range scored {
-		company := gamejob.NormalizeCompanyName(s.Posting.Company)
-		if _, ok := userCompanies[company]; !ok {
-			continue
+	rule := recommend.NewRule(companyNames, careerYears)
+	out := make([]mailing.ScoredPosting, 0, len(scored))
+	for i := range scored {
+		if rule.Matches(scored[i].Posting) {
+			out = append(out, scored[i])
 		}
-		// experience check: nil on either side = no constraint (lenient).
-		if s.Posting.MinExperienceYears != nil && careerYears != nil &&
-			*s.Posting.MinExperienceYears > *careerYears+3 {
-			continue
-		}
-		out = append(out, s)
 	}
 	return out
 }

@@ -3,6 +3,7 @@ package mailing
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"net/smtp"
@@ -76,12 +77,12 @@ func (m *SMTPMailer) SendDigest(ctx context.Context, runAt time.Time, postings [
 	}
 
 	subject := fmt.Sprintf("SkipJD Digest %s (%d new postings)", runAt.Format(time.RFC3339), len(postings))
-	body := buildDigestBody(postings)
+	body := BuildDigestBody(postings)
 
 	message := strings.Join([]string{
-		fmt.Sprintf("From: %s", m.config.From),
-		fmt.Sprintf("To: %s", m.config.To),
-		fmt.Sprintf("Subject: %s", subject),
+		"From: " + m.config.From,
+		"To: " + m.config.To,
+		"Subject: " + subject,
 		"MIME-Version: 1.0",
 		"Content-Type: text/plain; charset=UTF-8",
 		"",
@@ -108,9 +109,9 @@ func (m *SMTPMailer) SendMatchDigest(ctx context.Context, to string, runAt time.
 	body := BuildMatchDigestBody(sections)
 
 	message := strings.Join([]string{
-		fmt.Sprintf("From: %s", m.config.From),
-		fmt.Sprintf("To: %s", to),
-		fmt.Sprintf("Subject: %s", subject),
+		"From: " + m.config.From,
+		"To: " + to,
+		"Subject: " + subject,
 		"MIME-Version: 1.0",
 		"Content-Type: text/plain; charset=UTF-8",
 		"",
@@ -147,7 +148,8 @@ func BuildMatchDigestBody(sections []Section) string {
 }
 
 func renderItems(b *strings.Builder, items []ScoredPosting) {
-	for i, item := range items {
+	for i := range items {
+		item := &items[i]
 		s := item.Score
 		fmt.Fprintf(b, "[%d] 점수 %d (경험:%d / 역량:%d / 성향:%d)\n",
 			i+1, s.Total, s.Experience.Hits, s.Competency.Hits, s.Trait.Hits)
@@ -174,9 +176,13 @@ func writeCategory(b *strings.Builder, label string, items []string) {
 	fmt.Fprintf(b, "  · %s: %s\n", label, strings.Join(items, ", "))
 }
 
-func buildDigestBody(postings []model.JobPosting) string {
+// BuildDigestBody renders a plain, score-free digest of postings. Used by
+// SendDigest and by the rule-based recommender (cmd/recommend), which has no
+// match scores to show.
+func BuildDigestBody(postings []model.JobPosting) string {
 	var b strings.Builder
-	for i, posting := range postings {
+	for i := range postings {
+		posting := &postings[i]
 		_, _ = fmt.Fprintf(&b, "[%d]\n", i+1)
 		_, _ = fmt.Fprintf(&b, "제목: %s\n", posting.Title)
 		_, _ = fmt.Fprintf(&b, "회사: %s\n", posting.Company)
@@ -204,7 +210,7 @@ func sendSMTPMail(ctx context.Context, config SMTPConfig, to string, msg []byte)
 	stop := closeConnOnContextDone(ctx, conn)
 	defer stop()
 
-	if err := setSMTPDeadline(conn, ctx, smtpIOTimeout); err != nil {
+	if err = setSMTPDeadline(conn, ctx, smtpIOTimeout); err != nil {
 		return fmt.Errorf("set smtp deadline: %w", err)
 	}
 
@@ -216,21 +222,21 @@ func sendSMTPMail(ctx context.Context, config SMTPConfig, to string, msg []byte)
 
 	ok, _ := client.Extension("STARTTLS")
 	if !ok {
-		return fmt.Errorf("smtp server does not support STARTTLS")
+		return errors.New("smtp server does not support STARTTLS")
 	}
-	if err := client.StartTLS(&tls.Config{ServerName: config.Host, MinVersion: tls.VersionTLS12}); err != nil {
+	if err = client.StartTLS(&tls.Config{ServerName: config.Host, MinVersion: tls.VersionTLS12}); err != nil {
 		return fmt.Errorf("starttls: %w", err)
 	}
 
 	auth := smtp.PlainAuth("", config.User, config.Pass, config.Host)
-	if err := client.Auth(auth); err != nil {
+	if err = client.Auth(auth); err != nil {
 		return fmt.Errorf("authenticate smtp user: %w", err)
 	}
 
-	if err := client.Mail(config.From); err != nil {
+	if err = client.Mail(config.From); err != nil {
 		return fmt.Errorf("set sender: %w", err)
 	}
-	if err := client.Rcpt(to); err != nil {
+	if err = client.Rcpt(to); err != nil {
 		return fmt.Errorf("set recipient: %w", err)
 	}
 
