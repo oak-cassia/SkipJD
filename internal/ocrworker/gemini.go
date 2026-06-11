@@ -93,7 +93,7 @@ func runGemini(ctx context.Context, cwd, imgName string, timeout time.Duration) 
 			cmdCtx, cancel := context.WithTimeout(attemptCtx, timeout)
 			defer cancel()
 
-			cmd := exec.CommandContext(cmdCtx, "gemini", "-p", ocrPrompt+" @"+imgName, "-o", "text")
+			cmd := exec.CommandContext(cmdCtx, "gemini", "--skip-trust", "-p", ocrPrompt+" @"+imgName, "-o", "text")
 			cmd.Dir = cwd
 
 			stdout.Reset()
