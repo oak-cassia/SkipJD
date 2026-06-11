@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -36,10 +37,10 @@ type Options struct {
 // --force is set.
 func Run(ctx context.Context, repo *repository.UserExtractionRepository, opts Options) error {
 	if opts.UserID == 0 {
-		return fmt.Errorf("user-id must be > 0")
+		return errors.New("user-id must be > 0")
 	}
 	if len(opts.Files) == 0 {
-		return fmt.Errorf("--file is required (one or more)")
+		return errors.New("--file is required (one or more)")
 	}
 	if err := geminiexec.EnsureAvailable(); err != nil {
 		return err
@@ -57,7 +58,8 @@ func Run(ctx context.Context, repo *repository.UserExtractionRepository, opts Op
 	hash := hex.EncodeToString(sum[:])
 
 	if !opts.Force {
-		existing, err := repo.GetSourceHash(ctx, opts.UserID)
+		var existing string
+		existing, err = repo.GetSourceHash(ctx, opts.UserID)
 		if err != nil {
 			return fmt.Errorf("check existing hash: %w", err)
 		}
@@ -68,7 +70,7 @@ func Run(ctx context.Context, repo *repository.UserExtractionRepository, opts Op
 	}
 
 	if opts.DebugDir != "" {
-		if err := os.MkdirAll(opts.DebugDir, 0o755); err != nil {
+		if err = os.MkdirAll(opts.DebugDir, 0o755); err != nil {
 			return fmt.Errorf("create debug dir: %w", err)
 		}
 	}

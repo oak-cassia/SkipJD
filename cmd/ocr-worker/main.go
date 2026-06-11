@@ -13,6 +13,7 @@ package main
 import (
 	"flag"
 	"log"
+	"time"
 
 	"skipjd/internal/cmdutil"
 	"skipjd/internal/ocrworker"
@@ -29,19 +30,24 @@ func main() {
 	deadline := flag.Duration("deadline", 0, "Max duration for the ocr-worker batch (0 = no deadline)")
 	flag.Parse()
 
-	ctx, cancel := cmdutil.SetupContext(*deadline)
-	defer cancel()
-
-	db := cmdutil.MustConnectDB()
-	repo := repository.NewCrawlerRepository(db)
-	if err := ocrworker.Run(ctx, repo, ocrworker.Options{
+	opts := ocrworker.Options{
 		Limit:         *limit,
 		Offset:        *offset,
 		MinOCRChars:   *minChars,
 		DebugDir:      *debugDir,
 		Workers:       *workers,
 		GeminiTimeout: *geminiTimeout,
-	}); err != nil {
+	}
+	if err := run(*deadline, opts); err != nil {
 		log.Fatalf("ocr worker failed: %v", err)
 	}
+}
+
+// run is split from main so log.Fatalf cannot skip the deferred cancel.
+func run(deadline time.Duration, opts ocrworker.Options) error {
+	ctx, cancel := cmdutil.SetupContext(deadline)
+	defer cancel()
+
+	repo := repository.NewCrawlerRepository(cmdutil.MustConnectDB())
+	return ocrworker.Run(ctx, repo, opts)
 }

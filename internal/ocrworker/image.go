@@ -107,7 +107,7 @@ func downloadImage(ctx context.Context, rawURL string) ([]byte, error) {
 
 	var payload []byte
 
-	err = retry.Do(ctx, httpRetryAttempts, httpRetryBaseDelay,
+	retryErr := retry.Do(ctx, httpRetryAttempts, httpRetryBaseDelay,
 		func(attemptCtx context.Context) error {
 			reqCtx, cancel := context.WithTimeout(attemptCtx, downloadTimeout)
 			defer cancel()
@@ -147,8 +147,8 @@ func downloadImage(ctx context.Context, rawURL string) ([]byte, error) {
 		isRetryableImageHTTP,
 	)
 
-	if err != nil {
-		return nil, err
+	if retryErr != nil {
+		return nil, retryErr
 	}
 	return payload, nil
 }

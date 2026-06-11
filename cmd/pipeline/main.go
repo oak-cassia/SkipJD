@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"time"
@@ -18,6 +19,18 @@ import (
 	"skipjd/internal/ocrworker"
 	"skipjd/internal/repository"
 )
+
+// runConfig bundles the flag values for run.
+type runConfig struct {
+	deadline    time.Duration
+	httpTimeout time.Duration
+	workers     int
+	skipCrawl   bool
+	skipOCR     bool
+	skipExtract bool
+	ocrOpts     ocrworker.Options
+	extractOpts extractor.Options
+}
 
 func main() {
 	limit := flag.Int("limit", 50, "max postings per OCR/extract batch")
@@ -33,7 +46,37 @@ func main() {
 	skipExtract := flag.Bool("skip-extract", false, "skip stage 3 (extract)")
 	flag.Parse()
 
-	ctx, cancel := cmdutil.SetupContext(*deadline)
+	cfg := runConfig{
+		deadline:    *deadline,
+		httpTimeout: *httpTimeout,
+		workers:     *workers,
+		skipCrawl:   *skipCrawl,
+		skipOCR:     *skipOCR,
+		skipExtract: *skipExtract,
+		ocrOpts: ocrworker.Options{
+			Limit:         *limit,
+			Offset:        *offset,
+			MinOCRChars:   *minOCRChars,
+			DebugDir:      *debugDir,
+			Workers:       *workers,
+			GeminiTimeout: *geminiTimeout,
+		},
+		extractOpts: extractor.Options{
+			Limit:         *limit,
+			Offset:        *offset,
+			DebugDir:      *debugDir,
+			Workers:       *workers,
+			GeminiTimeout: *geminiTimeout,
+		},
+	}
+	if err := run(cfg); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// run is split from main so log.Fatal cannot skip the deferred cancel.
+func run(cfg runConfig) error {
+	ctx, cancel := cmdutil.SetupContext(cfg.deadline)
 	defer cancel()
 
 	db := cmdutil.MustConnectDB()
@@ -46,47 +89,35 @@ func main() {
 		&model.JobPostingImage{},
 		&model.JobPostingExtraction{},
 	); err != nil {
-		log.Fatalf("failed to migrate db: %v", err)
+		return fmt.Errorf("failed to migrate db: %w", err)
 	}
 
 	repo := repository.NewCrawlerRepository(db)
 
-	if !*skipCrawl {
+	if !cfg.skipCrawl {
 		start := time.Now()
-		if err := runCrawl(ctx, repo, *httpTimeout, *workers); err != nil {
-			log.Fatalf("[stage=crawl] %v", err)
+		if err := runCrawl(ctx, repo, cfg.httpTimeout, cfg.workers); err != nil {
+			return fmt.Errorf("[stage=crawl] %w", err)
 		}
 		log.Printf("[stage=crawl] done in %s", time.Since(start).Round(time.Millisecond))
 	}
 
-	if !*skipOCR {
+	if !cfg.skipOCR {
 		start := time.Now()
-		if err := ocrworker.Run(ctx, repo, ocrworker.Options{
-			Limit:         *limit,
-			Offset:        *offset,
-			MinOCRChars:   *minOCRChars,
-			DebugDir:      *debugDir,
-			Workers:       *workers,
-			GeminiTimeout: *geminiTimeout,
-		}); err != nil {
-			log.Fatalf("[stage=ocr] %v", err)
+		if err := ocrworker.Run(ctx, repo, cfg.ocrOpts); err != nil {
+			return fmt.Errorf("[stage=ocr] %w", err)
 		}
 		log.Printf("[stage=ocr] done in %s", time.Since(start).Round(time.Millisecond))
 	}
 
-	if !*skipExtract {
+	if !cfg.skipExtract {
 		start := time.Now()
-		if err := extractor.Run(ctx, repo, extractor.Options{
-			Limit:         *limit,
-			Offset:        *offset,
-			DebugDir:      *debugDir,
-			Workers:       *workers,
-			GeminiTimeout: *geminiTimeout,
-		}); err != nil {
-			log.Fatalf("[stage=extract] %v", err)
+		if err := extractor.Run(ctx, repo, cfg.extractOpts); err != nil {
+			return fmt.Errorf("[stage=extract] %w", err)
 		}
 		log.Printf("[stage=extract] done in %s", time.Since(start).Round(time.Millisecond))
 	}
+	return nil
 }
 
 func runCrawl(ctx context.Context, repo *repository.CrawlerRepository, httpTimeout time.Duration, detailWorkers int) error {

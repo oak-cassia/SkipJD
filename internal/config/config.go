@@ -61,7 +61,7 @@ func getSMTPPort() int {
 func getEnv(key string) string {
 	v := os.Getenv(key)
 	if v == "" {
-		panic(fmt.Sprintf("missing required env: %s", key))
+		panic("missing required env: " + key)
 	}
 	return v
 }

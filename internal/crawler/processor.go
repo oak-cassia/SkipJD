@@ -55,9 +55,9 @@ func (c *Crawler) persistPostingDetails(
 	}
 
 	sourceKeys := make([]string, 0, len(postings))
-	for _, posting := range postings {
-		if _, exists := detailBySourceKey[posting.SourceKey]; exists {
-			sourceKeys = append(sourceKeys, posting.SourceKey)
+	for i := range postings {
+		if _, exists := detailBySourceKey[postings[i].SourceKey]; exists {
+			sourceKeys = append(sourceKeys, postings[i].SourceKey)
 		}
 	}
 	if len(sourceKeys) == 0 {

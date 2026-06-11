@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -45,7 +46,7 @@ func (r *UserNotificationLogRepository) GetSentPostingIDs(ctx context.Context, u
 // the candidate filter).
 func (r *UserNotificationLogRepository) Record(ctx context.Context, userID uint, postingIDs []uint, sentAt time.Time) error {
 	if userID == 0 {
-		return fmt.Errorf("record notifications: userID must be > 0")
+		return errors.New("record notifications: userID must be > 0")
 	}
 	if len(postingIDs) == 0 {
 		return nil

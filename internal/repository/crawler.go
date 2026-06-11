@@ -41,7 +41,8 @@ func (r *CrawlerRepository) GetLatestFinishedAtBySource(ctx context.Context, sou
 		Take(&crawlRun).
 		Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
+		// "no previous run" is a valid state callers branch on, not an error.
+		return nil, nil //nolint:nilnil // not-found contract is (nil, nil)
 	}
 	if err != nil {
 		return nil, err
@@ -102,8 +103,8 @@ func (r *CrawlerRepository) UpsertJobPostings(ctx context.Context, postings []mo
 
 		source := postings[0].Source
 		sourceKeys := make([]string, 0, len(postings))
-		for _, posting := range postings {
-			sourceKeys = append(sourceKeys, posting.SourceKey)
+		for i := range postings {
+			sourceKeys = append(sourceKeys, postings[i].SourceKey)
 		}
 
 		persistedPostings := make([]struct {

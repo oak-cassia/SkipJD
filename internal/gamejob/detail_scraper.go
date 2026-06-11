@@ -162,7 +162,7 @@ func (s *DetailScraper) fetchIframe(ctx context.Context, iframeURL string) (stri
 			}(resp.Body)
 
 			if resp.StatusCode != http.StatusOK {
-				return statusErr{status: resp.StatusCode, msg: fmt.Sprintf("fetch iframe: unexpected status %s", resp.Status)}
+				return statusErr{status: resp.StatusCode, msg: "fetch iframe: unexpected status " + resp.Status}
 			}
 
 			body, err := io.ReadAll(resp.Body)

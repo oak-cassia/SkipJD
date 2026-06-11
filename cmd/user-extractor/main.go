@@ -15,8 +15,10 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"skipjd/internal/cmdutil"
 	"skipjd/internal/model"
@@ -39,24 +41,29 @@ func main() {
 	force := flag.Bool("force", false, "re-run gemini even if SourceHash matches the stored extraction")
 	flag.Parse()
 
-	ctx, cancel := cmdutil.SetupContext(*deadline)
-	defer cancel()
-
-	db := cmdutil.MustConnectDB()
-
-	if err := db.AutoMigrate(&model.User{}, &model.UserExtraction{}); err != nil {
-		log.Fatalf("failed to migrate db: %v", err)
-	}
-
-	repo := repository.NewUserExtractionRepository(db)
-
-	if err := userextractor.Run(ctx, repo, userextractor.Options{
+	opts := userextractor.Options{
 		UserID:        *userID,
 		Files:         files,
 		DebugDir:      *debugDir,
 		GeminiTimeout: *geminiTimeout,
 		Force:         *force,
-	}); err != nil {
+	}
+	if err := run(*deadline, opts); err != nil {
 		log.Fatalf("user-extractor failed: %v", err)
 	}
+}
+
+// run is split from main so log.Fatalf cannot skip the deferred cancel.
+func run(deadline time.Duration, opts userextractor.Options) error {
+	ctx, cancel := cmdutil.SetupContext(deadline)
+	defer cancel()
+
+	db := cmdutil.MustConnectDB()
+
+	if err := db.AutoMigrate(&model.User{}, &model.UserExtraction{}); err != nil {
+		return fmt.Errorf("failed to migrate db: %w", err)
+	}
+
+	repo := repository.NewUserExtractionRepository(db)
+	return userextractor.Run(ctx, repo, opts)
 }

@@ -66,8 +66,8 @@ func (r *CrawlerRepository) GetExtractionsByPostingIDs(ctx context.Context, post
 	}
 
 	out := make(map[uint]model.JobPostingExtraction, len(rows))
-	for _, row := range rows {
-		out[row.JobPostingID] = row
+	for i := range rows {
+		out[rows[i].JobPostingID] = rows[i]
 	}
 	return out, nil
 }

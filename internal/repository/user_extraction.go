@@ -47,7 +47,8 @@ func (r *UserExtractionRepository) GetByUserID(ctx context.Context, userID uint)
 		Take(&row).
 		Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
+		// "no extraction yet" is a valid state callers branch on, not an error.
+		return nil, nil //nolint:nilnil // not-found contract is (nil, nil)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get user extraction: %w", err)
@@ -82,7 +83,7 @@ func (r *UserExtractionRepository) UpsertUserExtraction(
 	experience, competency, trait, modelName, sourceFile, sourceHash string,
 ) error {
 	if userID == 0 {
-		return fmt.Errorf("upsert user extraction: userID must be > 0")
+		return errors.New("upsert user extraction: userID must be > 0")
 	}
 
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

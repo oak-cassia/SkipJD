@@ -2,6 +2,7 @@ package crawler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -88,10 +89,10 @@ func newCrawler(
 	opts ...Option,
 ) (*Crawler, error) {
 	if crawlerRepository == nil {
-		return nil, fmt.Errorf("crawler repository is required")
+		return nil, errors.New("crawler repository is required")
 	}
 	if collect == nil {
-		return nil, fmt.Errorf("crawler collector is required")
+		return nil, errors.New("crawler collector is required")
 	}
 
 	c := &Crawler{
@@ -112,7 +113,7 @@ func newCrawler(
 
 func NewCrawler(crawlerRepository *repository.CrawlerRepository, opts ...Option) (*Crawler, error) {
 	if crawlerRepository == nil {
-		return nil, fmt.Errorf("crawler repository is required")
+		return nil, errors.New("crawler repository is required")
 	}
 
 	c := &Crawler{
@@ -128,7 +129,7 @@ func NewCrawler(crawlerRepository *repository.CrawlerRepository, opts ...Option)
 	}
 
 	if c.collect == nil {
-		return nil, fmt.Errorf("crawler collector is required (use WithCollector)")
+		return nil, errors.New("crawler collector is required (use WithCollector)")
 	}
 
 	return c, nil
@@ -141,7 +142,7 @@ func (c *Crawler) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(
+	if _, err = fmt.Fprintf(
 		c.progressWriter(),
 		"collect_options last_updated=%s today_date=%s max_pages=%d\n",
 		opts.LastUpdated.In(seoulLocation).Format(dateOnlyFormat),
@@ -212,8 +213,8 @@ func (c *Crawler) enrichWithDetail(ctx context.Context, postings []model.JobPost
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(c.detailWorkerCount)
 
-	for _, posting := range postings {
-		p := posting
+	for i := range postings {
+		p := &postings[i]
 		eg.Go(func() error {
 			content, err := c.collectDetail(egCtx, p.URL)
 			resultsChan <- result{sourceKey: p.SourceKey, content: content, err: err}

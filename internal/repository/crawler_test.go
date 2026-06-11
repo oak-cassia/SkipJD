@@ -229,8 +229,8 @@ func assertPostingDutyCodes(t *testing.T, repo *CrawlerRepository, sourceKey str
 		Find(&duties).Error)
 
 	got := make([]int, 0, len(duties))
-	for _, duty := range duties {
-		got = append(got, duty.DutyCode)
+	for i := range duties {
+		got = append(got, duties[i].DutyCode)
 	}
 	assert.Equal(t, want, got)
 }

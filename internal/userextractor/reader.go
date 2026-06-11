@@ -2,6 +2,7 @@ package userextractor
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -37,7 +38,7 @@ func ReadResume(path string) (string, error) {
 // documents apart. Returns an error if any single file fails to parse.
 func ReadResumes(paths []string) (string, error) {
 	if len(paths) == 0 {
-		return "", fmt.Errorf("no input files")
+		return "", errors.New("no input files")
 	}
 	var sb strings.Builder
 	for i, p := range paths {

@@ -3,6 +3,7 @@ package crawler
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -30,7 +31,9 @@ func Encode(postings []model.JobPosting, dutyCodesBySourceKey map[string][]int) 
 		Postings: make([]Posting, 0, len(postings)),
 	}
 
-	for _, posting := range postings {
+	for i := range postings {
+		posting := &postings[i]
+
 		var dutyCodes []int
 		if src := dutyCodesBySourceKey[posting.SourceKey]; len(src) > 0 {
 			dutyCodes = make([]int, len(src))
@@ -143,18 +146,18 @@ func validatePosting(title, rawURL string) error {
 		return fmt.Errorf("url must be a valid absolute URL: %w", err)
 	}
 	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
-		return fmt.Errorf("url must use http or https")
+		return errors.New("url must use http or https")
 	}
 	if parsedURL.Host == "" {
-		return fmt.Errorf("url must be absolute")
+		return errors.New("url must be absolute")
 	}
 
 	if strings.HasSuffix(strings.ToLower(parsedURL.Hostname()), "gamejob.co.kr") {
 		if !isGameJobDetailURL(parsedURL) {
-			return fmt.Errorf("url must point to a GameJob detail page")
+			return errors.New("url must point to a GameJob detail page")
 		}
 		if isTruncatedGameJobTitle(title) {
-			return fmt.Errorf("title appears truncated; likely from a GameJob promo section")
+			return errors.New("title appears truncated; likely from a GameJob promo section")
 		}
 	}
 
@@ -190,12 +193,14 @@ func isTruncatedGameJobTitle(title string) bool {
 func buildSourceKey(rawURL string) (string, error) {
 	trimmed := strings.TrimSpace(rawURL)
 	if trimmed == "" {
-		return "", fmt.Errorf("source key requires a non-empty url")
+		return "", errors.New("source key requires a non-empty url")
 	}
 
 	parsedURL, err := url.Parse(trimmed)
 	if err != nil {
-		return trimmed, nil
+		// Unparseable URLs intentionally fall back to the raw trimmed string
+		// as the source key instead of failing the row.
+		return trimmed, nil //nolint:nilerr // fallback by design
 	}
 
 	parsedURL.Fragment = ""

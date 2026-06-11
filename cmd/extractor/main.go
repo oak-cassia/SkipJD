@@ -13,6 +13,7 @@ package main
 import (
 	"flag"
 	"log"
+	"time"
 
 	"skipjd/internal/cmdutil"
 	"skipjd/internal/extractor"
@@ -28,18 +29,23 @@ func main() {
 	deadline := flag.Duration("deadline", 0, "Max duration for the extractor batch (0 = no deadline)")
 	flag.Parse()
 
-	ctx, cancel := cmdutil.SetupContext(*deadline)
-	defer cancel()
-
-	db := cmdutil.MustConnectDB()
-	repo := repository.NewCrawlerRepository(db)
-	if err := extractor.Run(ctx, repo, extractor.Options{
+	opts := extractor.Options{
 		Limit:         *limit,
 		Offset:        *offset,
 		DebugDir:      *debugDir,
 		Workers:       *workers,
 		GeminiTimeout: *geminiTimeout,
-	}); err != nil {
+	}
+	if err := run(*deadline, opts); err != nil {
 		log.Fatalf("extractor failed: %v", err)
 	}
+}
+
+// run is split from main so log.Fatalf cannot skip the deferred cancel.
+func run(deadline time.Duration, opts extractor.Options) error {
+	ctx, cancel := cmdutil.SetupContext(deadline)
+	defer cancel()
+
+	repo := repository.NewCrawlerRepository(cmdutil.MustConnectDB())
+	return extractor.Run(ctx, repo, opts)
 }
